@@ -5,6 +5,7 @@ import { prettyJSON } from "hono/pretty-json";
 import { count } from "drizzle-orm";
 import { db } from "./db";
 import * as schema from "./db/schema";
+import { getNeo4jDriver } from "./db/neo4j";
 import usersRoute from "./routes/users";
 import productsRoute from "./routes/products";
 import ordersRoute from "./routes/orders";
@@ -19,6 +20,38 @@ app.use(prettyJSON());
 
 app.get("/", (c) => c.json({ message: "Bun + Hono API 🚀", version: "1.0.0" }));
 app.get("/health", (c) => c.json({ status: "ok", timestamp: new Date().toISOString() }));
+
+app.get("/health/db", async (c) => {
+  const results: Record<string, { status: string; latency?: string; error?: string }> = {};
+
+  // Check PostgreSQL
+  const pgStart = Date.now();
+  try {
+    await db.select({ count: count() }).from(schema.users);
+    results.postgresql = { status: "connected", latency: `${Date.now() - pgStart}ms` };
+  } catch (err) {
+    results.postgresql = { status: "error", error: err instanceof Error ? err.message : String(err) };
+  }
+
+  // Check Neo4j
+  const neo4jStart = Date.now();
+  try {
+    const driver = getNeo4jDriver();
+    const session = driver.session();
+    const result = await session.run("RETURN 1 AS ok");
+    await session.close();
+    const ok = result.records[0]?.get("ok");
+    results.neo4j = {
+      status: ok ? "connected" : "error",
+      latency: `${Date.now() - neo4jStart}ms`,
+    };
+  } catch (err) {
+    results.neo4j = { status: "error", latency: `${Date.now() - neo4jStart}ms`, error: err instanceof Error ? err.message : String(err) };
+  }
+
+  const allHealthy = Object.values(results).every((r) => r.status === "connected");
+  return c.json({ status: allHealthy ? "healthy" : "degraded", services: results }, allHealthy ? 200 : 503);
+});
 app.get("/stats", async (c) => {
   const [u, p, o, oi, r] = await Promise.all([
     db.select({ count: count() }).from(schema.users),
