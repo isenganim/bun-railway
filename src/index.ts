@@ -2,8 +2,9 @@ import { Hono } from "hono";
 import { logger } from "hono/logger";
 import { cors } from "hono/cors";
 import { prettyJSON } from "hono/pretty-json";
-import { sql } from "drizzle-orm";
+import { count } from "drizzle-orm";
 import { db } from "./db";
+import * as schema from "./db/schema";
 import usersRoute from "./routes/users";
 import productsRoute from "./routes/products";
 import ordersRoute from "./routes/orders";
@@ -18,19 +19,19 @@ app.use(prettyJSON());
 app.get("/", (c) => c.json({ message: "Bun + Hono API 🚀", version: "1.0.0" }));
 app.get("/health", (c) => c.json({ status: "ok", timestamp: new Date().toISOString() }));
 app.get("/stats", async (c) => {
-  const [users, products, orders, orderItems, reviews] = await Promise.all([
-    db.execute(sql`SELECT COUNT(*) FROM users`),
-    db.execute(sql`SELECT COUNT(*) FROM products`),
-    db.execute(sql`SELECT COUNT(*) FROM orders`),
-    db.execute(sql`SELECT COUNT(*) FROM order_items`),
-    db.execute(sql`SELECT COUNT(*) FROM reviews`),
+  const [u, p, o, oi, r] = await Promise.all([
+    db.select({ count: count() }).from(schema.users),
+    db.select({ count: count() }).from(schema.products),
+    db.select({ count: count() }).from(schema.orders),
+    db.select({ count: count() }).from(schema.orderItems),
+    db.select({ count: count() }).from(schema.reviews),
   ]);
   return c.json({
-    users: Number((users.rows[0] as any).count),
-    products: Number((products.rows[0] as any).count),
-    orders: Number((orders.rows[0] as any).count),
-    order_items: Number((orderItems.rows[0] as any).count),
-    reviews: Number((reviews.rows[0] as any).count),
+    users: u[0].count,
+    products: p[0].count,
+    orders: o[0].count,
+    order_items: oi[0].count,
+    reviews: r[0].count,
   });
 });
 
