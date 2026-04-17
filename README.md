@@ -23,8 +23,11 @@ cp .env.example .env
 bunx drizzle-kit generate
 bun run migrate
 
-# Seed data (100 users, 36 products, 300 orders, 500 reviews)
+# Seed data (200 users, 194 products dari dummyjson, 500 orders, 1000 reviews)
 bun run seed
+
+# Seed data tambahan (300 users, ~500 produk sintetis, 700 orders, 2000 reviews)
+bun run seed:extra
 
 # Dev server
 bun run dev
