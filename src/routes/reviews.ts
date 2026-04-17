@@ -1,7 +1,10 @@
 import { Hono } from "hono";
+import { zValidator } from "@hono/zod-validator";
 import { eq, avg, count } from "drizzle-orm";
 import { db } from "../db";
 import { reviews, users, products } from "../db/schema";
+import { createReviewSchema } from "../validators";
+import { authMiddleware, requireRole } from "../middleware/auth";
 import { ok, created, notFound, badRequest } from "../lib/response";
 
 const app = new Hono();
@@ -33,14 +36,9 @@ app.get("/product/:productId", async (c) => {
   });
 });
 
-// POST /reviews
-app.post("/", async (c) => {
-  const body = await c.req.json().catch(() => null);
-  if (!body?.userId || !body?.productId || !body?.rating)
-    return badRequest(c, "userId, productId, rating are required");
-
-  if (body.rating < 1 || body.rating > 5)
-    return badRequest(c, "rating must be between 1 and 5");
+// POST /reviews (validated)
+app.post("/", zValidator("json", createReviewSchema), async (c) => {
+  const body = c.req.valid("json");
 
   const [[user], [product]] = await Promise.all([
     db.select({ id: users.id }).from(users).where(eq(users.id, body.userId)),
@@ -60,8 +58,8 @@ app.post("/", async (c) => {
   return created(c, review);
 });
 
-// DELETE /reviews/:id
-app.delete("/:id", async (c) => {
+// DELETE /reviews/:id (admin/moderator only)
+app.delete("/:id", authMiddleware(), requireRole("admin", "moderator"), async (c) => {
   const id = Number(c.req.param("id"));
   if (isNaN(id)) return badRequest(c, "Invalid ID");
 
