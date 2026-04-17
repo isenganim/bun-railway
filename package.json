@@ -6,12 +6,14 @@
     "start": "bun run src/index.ts",
     "migrate": "bun run src/db/migrate.ts",
     "seed": "bun run src/db/seed.ts",
-    "seed:extra": "bun run src/db/seed-extra.ts"
+    "seed:extra": "bun run src/db/seed-extra.ts",
+    "neo4j:sync": "bun run src/scripts/sync-to-neo4j.ts"
   },
   "dependencies": {
+    "drizzle-orm": "^0.45.2",
     "hono": "^4.12.14",
-    "postgres": "^3.4.9",
-    "drizzle-orm": "^0.45.2"
+    "neo4j-driver": "^6.0.1",
+    "postgres": "^3.4.9"
   },
   "devDependencies": {
     "drizzle-kit": "^0.31.10",

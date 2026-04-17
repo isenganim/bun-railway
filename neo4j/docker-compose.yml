@@ -1,0 +1,34 @@
+# Deploy ini di Coolify sebagai Docker Compose resource
+# Atau jalankan lokal: docker compose up -d
+
+services:
+  neo4j:
+    image: neo4j:5-community
+    restart: unless-stopped
+    environment:
+      # Password — ganti di Coolify UI atau pakai magic variable
+      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD:-changeme123}
+      # Plugins
+      - NEO4J_PLUGINS=["apoc"]
+      # Memory — sesuaikan dengan RAM server
+      - NEO4J_server_memory_heap_initial__size=${NEO4J_HEAP_INIT:-256m}
+      - NEO4J_server_memory_heap_max__size=${NEO4J_HEAP_MAX:-512m}
+      - NEO4J_server_memory_pagecache_size=${NEO4J_PAGECACHE:-256m}
+      # Allow APOC procedures
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:7474 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  neo4j_data:
+  neo4j_logs:

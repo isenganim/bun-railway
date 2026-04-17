@@ -9,6 +9,7 @@ import usersRoute from "./routes/users";
 import productsRoute from "./routes/products";
 import ordersRoute from "./routes/orders";
 import reviewsRoute from "./routes/reviews";
+import recommendationsRoute from "./routes/recommendations";
 
 const app = new Hono();
 
@@ -39,6 +40,7 @@ app.route("/users", usersRoute);
 app.route("/products", productsRoute);
 app.route("/orders", ordersRoute);
 app.route("/reviews", reviewsRoute);
+app.route("/recommendations", recommendationsRoute);
 
 app.notFound((c) => c.json({ success: false, error: "Route not found" }, 404));
 app.onError((err, c) => {
