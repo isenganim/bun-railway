@@ -41,12 +41,17 @@ app.get(
   describeRoute({
     tags: ["Coupons"],
     summary: "List coupons",
-    description: "Returns a paginated list of all coupons.",
+    description: "Returns a paginated list of all coupons including usage stats and codes. Admin or moderator only.",
+    security: [{ bearerAuth: [] }],
     responses: {
       200: { description: "Paginated coupons", content: { "application/json": { schema: resolver(PaginatedCouponsSchema) } } },
       400: { description: "Invalid pagination", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      401: { description: "Unauthorized", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      403: { description: "Forbidden", content: { "application/json": { schema: resolver(ErrorSchema) } } },
     },
   }),
+  authMiddleware(),
+  requireRole("admin", "moderator"),
   async (c) => {
   const pg = parsePagination(c.req.query("page"), c.req.query("limit"));
   if (!pg) return badRequest(c, "Invalid pagination parameters");
