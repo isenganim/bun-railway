@@ -76,15 +76,59 @@ The API keeps the Neo4j graph in sync automatically:
 | `POST /reviews` | Creates `(User)-[:REVIEWED]->(Product)` |
 | `DELETE /reviews/:id` | Removes the `[:REVIEWED]` relationship |
 
-For a full backfill (initial setup or recovery after downtime):
+> Neo4j sync is **fire-and-forget** — if Neo4j is unreachable, orders and reviews still succeed. Errors are logged to the server console.
+
+### End-to-End Sync Example
+
+```bash
+BASE="http://localhost:3000/api/v1"
+
+# 1. Login
+TOKEN=$(curl -s -X POST $BASE/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"john@example.com","password":"password123"}' | jq -r '.data.token')
+
+# 2. Place order → auto-creates (User)-[:PURCHASED]->(Product) in Neo4j
+curl -s -X POST $BASE/orders \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{
+    "shippingAddress": "Jl. Sudirman No. 123, Jakarta",
+    "items": [
+      { "productId": 1, "quantity": 2 },
+      { "productId": 3, "quantity": 1 }
+    ]
+  }' | jq
+
+# 3. Submit review → auto-creates (User)-[:REVIEWED]->(Product) in Neo4j
+REVIEW_ID=$(curl -s -X POST $BASE/reviews \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"productId": 1, "rating": 5, "comment": "Amazing!"}' | jq '.data.id')
+
+# 4. Verify the graph was updated
+curl -s http://localhost:3000/recommendations/graph-stats | jq
+
+# 5. See recommendations powered by the new data
+curl -s "$BASE/recommendations/products/1" | jq   # also-bought
+curl -s "$BASE/recommendations/users/1" | jq       # personalized
+curl -s "$BASE/recommendations/trending" | jq       # trending
+
+# 6. Delete review → auto-removes [:REVIEWED] edge from Neo4j
+curl -s -X DELETE $BASE/reviews/$REVIEW_ID \
+  -H "Authorization: Bearer $TOKEN" | jq
+```
+
+### Manual Full Sync (first-time or recovery)
 
 ```bash
 bun run neo4j:sync
 ```
 
-> Neo4j sync is **fire-and-forget** — if Neo4j is unreachable, orders and reviews still succeed. Errors are logged to the server console.
+This wipes the graph and rebuilds from PostgreSQL. Use after initial setup or if Neo4j was offline for a period.
 
 ## API Endpoints
+
 
 Base URL: `/api/v1`
 
