@@ -131,6 +131,9 @@ const orderStatuses = ["pending","processing","shipped","delivered","cancelled"]
 
 console.log("🌱 Seeding extra data...");
 
+// Hash password once for all users (password: password123)
+const passwordHash = await Bun.password.hash("password123", { algorithm: "bcrypt", cost: 10 });
+
 // Get existing user count to offset new user indices
 const existingUsers = await db.query.users.findMany({ columns: { id: true } });
 const startIdx = existingUsers.length;
@@ -146,6 +149,7 @@ const userInserts = Array.from({ length: 300 }, (_, i) => {
     name: `${first} ${last}`,
     email: `${username}@example.com`,
     username,
+    passwordHash,
     role: "user" as const,
     status: i % 15 === 0 ? "inactive" as const : "active" as const,
     bio: `Halo, saya ${first} ${last}. Senang berbelanja di sini!`,

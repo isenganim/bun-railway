@@ -1,5 +1,6 @@
 import { db } from "./index";
 import { users, products, orders, orderItems, reviews } from "./schema";
+import { sql } from "drizzle-orm";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -70,6 +71,14 @@ function slugify(text: string) {
 
 console.log("🌱 Seeding database...");
 
+// Truncate all tables so seed is re-runnable
+console.log("Truncating tables...");
+await db.execute(sql`TRUNCATE users, products, orders, order_items, order_status_history, reviews, wishlists, categories, coupons, notifications RESTART IDENTITY CASCADE`);
+console.log("✓ Tables truncated");
+
+// Hash password once for all users (password: password123)
+const passwordHash = await Bun.password.hash("password123", { algorithm: "bcrypt", cost: 10 });
+
 console.log("Fetching products from dummyjson.com...");
 const res = await fetch("https://dummyjson.com/products?limit=194&select=title,description,price,stock,category,thumbnail");
 const { products: raw } = await res.json() as { products: any[] };
@@ -87,6 +96,7 @@ const userInserts = Array.from({ length: 200 }, (_, i) => {
     name: `${first} ${last}`,
     email,
     username,
+    passwordHash,
     role: i === 0 ? "admin" as const : i < 5 ? "moderator" as const : "user" as const,
     status: i % 20 === 0 ? "inactive" as const : "active" as const,
     bio: `Halo, saya ${first} ${last}. Senang berbelanja di sini!`,
@@ -175,4 +185,6 @@ console.log(`   Products : ${insertedProducts.length}`);
 console.log(`   Orders   : ${insertedOrders.length}`);
 console.log(`   Items    : ${orderItemInserts.length}`);
 console.log(`   Reviews  : 1000`);
+console.log(`\n🔑 All users password: password123`);
+console.log(`   Admin login: user_001@example.com / password123`);
 process.exit(0);
