@@ -209,11 +209,11 @@ app.post(
 
     const userId = currentUser.sub;
 
-    const [userExists] = await db.select({ id: users.id }).from(users).where(eq(users.id, userId));
+    const [userExists] = await db.select({ id: users.id, name: users.name, username: users.username }).from(users).where(eq(users.id, userId));
     if (!userExists) return notFound(c, "User not found");
 
     let totalAmount = 0;
-    const itemsToInsert: { productId: number; quantity: number; unitPrice: string }[] = [];
+    const itemsToInsert: { productId: number; quantity: number; unitPrice: string; productName: string; productCategory: string; productPrice: string }[] = [];
 
     for (const item of body.items) {
       const [product] = await db.select().from(products).where(eq(products.id, item.productId));
@@ -222,7 +222,7 @@ app.post(
 
       const price = Number(product.price);
       totalAmount += price * item.quantity;
-      itemsToInsert.push({ productId: product.id, quantity: item.quantity, unitPrice: String(price) });
+      itemsToInsert.push({ productId: product.id, quantity: item.quantity, unitPrice: String(price), productName: product.name, productCategory: product.category, productPrice: product.price });
     }
 
     let discountAmount = 0;
@@ -298,7 +298,12 @@ app.post(
       itemsToInsert.map((item) =>
         syncPurchased({
           userId,
+          userName: userExists.name,
+          username: userExists.username,
           productId: item.productId,
+          productName: item.productName,
+          productCategory: item.productCategory,
+          productPrice: item.productPrice,
           orderId: order.id,
           quantity: item.quantity,
           unitPrice: Number(item.unitPrice),

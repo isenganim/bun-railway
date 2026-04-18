@@ -109,8 +109,8 @@ app.post(
     const userId = currentUser.sub;
 
     const [[user], [product]] = await Promise.all([
-      db.select({ id: users.id }).from(users).where(eq(users.id, userId)),
-      db.select({ id: products.id }).from(products).where(eq(products.id, body.productId)),
+      db.select({ id: users.id, name: users.name, username: users.username }).from(users).where(eq(users.id, userId)),
+      db.select({ id: products.id, name: products.name, category: products.category, price: products.price }).from(products).where(eq(products.id, body.productId)),
     ]);
 
     if (!user) return notFound(c, "User not found");
@@ -126,7 +126,12 @@ app.post(
     // ── Neo4j: fire-and-forget sync ───────────────────────────────────────────
     syncReviewed({
       userId,
+      userName: user.name,
+      username: user.username,
       productId: body.productId,
+      productName: product.name,
+      productCategory: product.category,
+      productPrice: product.price,
       reviewId: review.id,
       rating: body.rating,
       comment: body.comment ?? "",
