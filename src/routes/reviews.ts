@@ -8,6 +8,7 @@ import { reviews, users, products } from "../db/schema";
 import { createReviewSchema } from "../validators";
 import { authMiddleware, requireRole, getCurrentUser } from "../middleware/auth";
 import { ok, created, notFound, badRequest } from "../lib/response";
+import { syncReviewed, unsyncReviewed } from "../lib/neo4j-sync";
 
 const app = new Hono();
 
@@ -122,6 +123,16 @@ app.post(
       comment: body.comment,
     }).returning();
 
+    // ── Neo4j: fire-and-forget sync ───────────────────────────────────────────
+    syncReviewed({
+      userId,
+      productId: body.productId,
+      reviewId: review.id,
+      rating: body.rating,
+      comment: body.comment ?? "",
+      date: review.createdAt.toISOString(),
+    }).catch(() => {/* already logged inside syncReviewed */});
+
     return created(c, review);
   },
 );
@@ -151,6 +162,9 @@ app.delete(
 
     const [review] = await db.delete(reviews).where(eq(reviews.id, id)).returning();
     if (!review) return notFound(c, "Review not found");
+
+    // ── Neo4j: remove relationship ──────────────────────────────────────────────
+    unsyncReviewed(review.id).catch(() => {/* already logged inside unsyncReviewed */});
 
     return ok(c, { message: "Review deleted" });
   },
