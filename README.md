@@ -57,7 +57,7 @@ bun run dev
 4. Deploy repo — Railway auto-detect Bun via Railpack
 5. Set environment variables: `DATABASE_URL`, `JWT_SECRET`, `NEO4J_*`
 6. Jalankan migrations:
-   ```
+   ```bash
    bun run migrate && bun run src/index.ts
    ```
 
@@ -75,15 +75,15 @@ Base URL: `/api/v1` (backward-compatible routes juga tersedia tanpa prefix)
 
 ### Users
 
-| Method | Endpoint                    | Auth  | Deskripsi                       |
-| ------ | --------------------------- | ----- | ------------------------------- |
-| GET    | `/api/v1/users`             | -     | List users (pagination, search) |
-| GET    | `/api/v1/users/:id`         | -     | Detail user                     |
-| GET    | `/api/v1/users/:id/orders`  | -     | Order history user              |
-| GET    | `/api/v1/users/:id/reviews` | -     | Review history user             |
-| POST   | `/api/v1/users`             | -     | Buat user baru                  |
-| PATCH  | `/api/v1/users/:id`         | -     | Update user (Zod validated)     |
-| DELETE | `/api/v1/users/:id`         | Admin | Hapus user                      |
+| Method | Endpoint                    | Auth        | Deskripsi                       |
+| ------ | --------------------------- | ----------- | ------------------------------- |
+| GET    | `/api/v1/users`             | -           | List users (pagination, search) |
+| GET    | `/api/v1/users/:id`         | -           | Detail user                     |
+| GET    | `/api/v1/users/:id/orders`  | Owner/Admin | Order history user              |
+| GET    | `/api/v1/users/:id/reviews` | -           | Review history user             |
+| POST   | `/api/v1/users`             | -           | Buat user baru                  |
+| PATCH  | `/api/v1/users/:id`         | Owner/Admin | Update user (Zod validated)     |
+| DELETE | `/api/v1/users/:id`         | Admin       | Hapus user                      |
 
 ### Products
 
@@ -99,30 +99,30 @@ Base URL: `/api/v1` (backward-compatible routes juga tersedia tanpa prefix)
 
 ### Orders
 
-| Method | Endpoint                      | Auth | Deskripsi                      |
-| ------ | ----------------------------- | ---- | ------------------------------ |
-| GET    | `/api/v1/orders`              | -    | List orders + user info        |
-| GET    | `/api/v1/orders/:id`          | -    | Detail order + items           |
-| GET    | `/api/v1/orders/:id/tracking` | -    | Tracking info + status history |
-| POST   | `/api/v1/orders`              | -    | Buat order (coupon support)    |
-| PATCH  | `/api/v1/orders/:id/status`   | -    | Update status + tracking       |
+| Method | Endpoint                      | Auth        | Deskripsi                      |
+| ------ | ----------------------------- | ----------- | ------------------------------ |
+| GET    | `/api/v1/orders`              | Admin/Mod   | List orders + user info        |
+| GET    | `/api/v1/orders/:id`          | Owner/Staff | Detail order + items           |
+| GET    | `/api/v1/orders/:id/tracking` | Owner/Staff | Tracking info + status history |
+| POST   | `/api/v1/orders`              | JWT         | Buat order (coupon support)    |
+| PATCH  | `/api/v1/orders/:id/status`   | Admin/Mod   | Update status + tracking       |
 
 ### Reviews
 
 | Method | Endpoint                             | Auth      | Deskripsi                   |
 | ------ | ------------------------------------ | --------- | --------------------------- |
 | GET    | `/api/v1/reviews/product/:productId` | -         | Reviews per product + stats |
-| POST   | `/api/v1/reviews`                    | -         | Buat review (Zod validated) |
+| POST   | `/api/v1/reviews`                    | JWT       | Buat review (Zod validated) |
 | DELETE | `/api/v1/reviews/:id`                | Admin/Mod | Hapus review                |
 
 ### Wishlists
 
-| Method | Endpoint                                              | Auth | Deskripsi                   |
-| ------ | ----------------------------------------------------- | ---- | --------------------------- |
-| GET    | `/api/v1/wishlists/users/:userId`                     | -    | Wishlist user               |
-| POST   | `/api/v1/wishlists/users/:userId`                     | -    | Tambah ke wishlist          |
-| DELETE | `/api/v1/wishlists/users/:userId/products/:productId` | -    | Hapus dari wishlist         |
-| GET    | `/api/v1/wishlists/products/:productId/count`         | -    | Jumlah wishlist per product |
+| Method | Endpoint                                              | Auth        | Deskripsi                   |
+| ------ | ----------------------------------------------------- | ----------- | --------------------------- |
+| GET    | `/api/v1/wishlists/users/:userId`                     | Owner/Admin | Wishlist user               |
+| POST   | `/api/v1/wishlists/users/:userId`                     | Owner/Admin | Tambah ke wishlist          |
+| DELETE | `/api/v1/wishlists/users/:userId/products/:productId` | Owner/Admin | Hapus dari wishlist         |
+| GET    | `/api/v1/wishlists/products/:productId/count`         | -           | Jumlah wishlist per product |
 
 ### Coupons
 
@@ -147,14 +147,14 @@ Base URL: `/api/v1` (backward-compatible routes juga tersedia tanpa prefix)
 
 ### Notifications
 
-| Method | Endpoint                                           | Auth  | Deskripsi           |
-| ------ | -------------------------------------------------- | ----- | ------------------- |
-| GET    | `/api/v1/notifications/users/:userId`              | -     | List notifications  |
-| GET    | `/api/v1/notifications/users/:userId/unread-count` | -     | Unread count        |
-| PATCH  | `/api/v1/notifications/:id/read`                   | -     | Mark as read        |
-| PATCH  | `/api/v1/notifications/users/:userId/read-all`     | -     | Mark all as read    |
-| POST   | `/api/v1/notifications`                            | Admin | Create notification |
-| DELETE | `/api/v1/notifications/:id`                        | -     | Delete notification |
+| Method | Endpoint                                           | Auth        | Deskripsi           |
+| ------ | -------------------------------------------------- | ----------- | ------------------- |
+| GET    | `/api/v1/notifications/users/:userId`              | Owner/Admin | List notifications  |
+| GET    | `/api/v1/notifications/users/:userId/unread-count` | Owner/Admin | Unread count        |
+| PATCH  | `/api/v1/notifications/:id/read`                   | Owner/Admin | Mark as read        |
+| PATCH  | `/api/v1/notifications/users/:userId/read-all`     | Owner/Admin | Mark all as read    |
+| POST   | `/api/v1/notifications`                            | Admin       | Create notification |
+| DELETE | `/api/v1/notifications/:id`                        | Owner/Admin | Delete notification |
 
 ### Recommendations (Neo4j)
 
@@ -168,7 +168,7 @@ Base URL: `/api/v1` (backward-compatible routes juga tersedia tanpa prefix)
 
 ## Query Params
 
-```
+```http
 GET /api/v1/products?page=1&limit=20&search=iphone&category=electronics&minPrice=100&maxPrice=1000&sort=price_asc
 GET /api/v1/users?page=1&limit=20&search=budi
 GET /api/v1/orders?page=1&limit=20

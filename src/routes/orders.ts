@@ -147,11 +147,19 @@ app.post("/", authMiddleware(), zValidator("json", createOrderSchema), async (c)
 
   // All validation passed — execute mutations in transaction with atomic operations
   const order = await db.transaction(async (tx) => {
-    // Atomic stock decrement using SQL expression
+    // Atomic stock decrement with stock >= quantity guard
     for (const item of itemsToInsert) {
-      await tx.update(products)
+      const [updatedProduct] = await tx.update(products)
         .set({ stock: sql`${products.stock} - ${item.quantity}` })
-        .where(eq(products.id, item.productId));
+        .where(and(
+          eq(products.id, item.productId),
+          sql`${products.stock} >= ${item.quantity}`,
+        ))
+        .returning({ id: products.id });
+
+      if (!updatedProduct) {
+        throw new Error("INSUFFICIENT_STOCK");
+      }
     }
 
     // Atomic coupon usage increment with maxUsage guard in WHERE
@@ -189,9 +197,11 @@ app.post("/", authMiddleware(), zValidator("json", createOrderSchema), async (c)
     return newOrder;
   }).catch((err) => {
     if (err.message === "COUPON_LIMIT_REACHED") return null;
+    if (err.message === "INSUFFICIENT_STOCK") return "INSUFFICIENT_STOCK" as const;
     throw err;
   });
 
+  if (order === "INSUFFICIENT_STOCK") return badRequest(c, "Insufficient stock for one or more products");
   if (!order) return badRequest(c, "Coupon usage limit reached");
 
   return created(c, order);

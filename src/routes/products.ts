@@ -141,7 +141,10 @@ app.patch("/:id", authMiddleware(), requireRole("admin", "moderator"), zValidato
   const body = c.req.valid("json");
 
   const updateData: Record<string, unknown> = {};
-  if (body.name !== undefined) updateData.name = body.name;
+  if (body.name !== undefined) {
+    updateData.name = body.name;
+    updateData.slug = body.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+  }
   if (body.description !== undefined) updateData.description = body.description;
   if (body.price !== undefined) updateData.price = String(body.price);
   if (body.stock !== undefined) updateData.stock = body.stock;

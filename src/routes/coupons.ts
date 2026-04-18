@@ -84,6 +84,15 @@ app.patch("/:id", authMiddleware(), requireRole("admin"), zValidator("json", upd
   if (body.maxUsage !== undefined) updateData.maxUsage = body.maxUsage;
   if (body.expiresAt !== undefined) updateData.expiresAt = body.expiresAt ? new Date(body.expiresAt) : null;
 
+  // Validate maxUsage >= currentUsage to avoid DB CHECK violation
+  if (body.maxUsage !== undefined && body.maxUsage !== null) {
+    const [existing] = await db.select({ currentUsage: coupons.currentUsage }).from(coupons).where(eq(coupons.id, id));
+    if (!existing) return notFound(c, "Coupon not found");
+    if (body.maxUsage < existing.currentUsage) {
+      return badRequest(c, "maxUsage cannot be less than currentUsage");
+    }
+  }
+
   const [coupon] = await db.update(coupons)
     .set(updateData)
     .where(eq(coupons.id, id))
