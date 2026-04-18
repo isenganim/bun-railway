@@ -1,13 +1,78 @@
 import { Hono } from "hono";
+import { describeRoute, resolver } from "hono-openapi";
+import { z } from "zod";
 import neo4j from "neo4j-driver";
 import { getNeo4jDriver } from "../db/neo4j";
 import { ok, notFound, badRequest } from "../lib/response";
 
 const app = new Hono();
 
+// ── Shared schemas ────────────────────────────────────────────────────────────
+
+const ProductRecommendationSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  category: z.string(),
+  price: z.string(),
+  score: z.number(),
+});
+
+const UserRecommendationSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  category: z.string(),
+  price: z.string(),
+  commonBuyers: z.number(),
+  avgRating: z.number(),
+});
+
+const TrendingSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  category: z.string(),
+  price: z.string(),
+  purchases: z.number(),
+  reviewCount: z.number(),
+  avgRating: z.number(),
+});
+
+const SimilarUserSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  username: z.string(),
+  sharedProducts: z.number(),
+});
+
+const GraphStatsSchema = z.object({
+  totalUsers: z.number(),
+  totalProducts: z.number(),
+  totalPurchases: z.number(),
+  totalReviews: z.number(),
+});
+
+const ErrorSchema = z.object({ success: z.literal(false), error: z.string() });
+
 // GET /recommendations/products/:id
 // "Users yang beli product ini juga beli..."
-app.get("/products/:id", async (c) => {
+app.get(
+  "/products/:id",
+  describeRoute({
+    tags: ["Recommendations"],
+    summary: "Products also bought with this product",
+    description: "Collaborative filtering: users who bought this product also bought these. Powered by Neo4j.",
+    responses: {
+      200: {
+        description: "Recommended products",
+        content: {
+          "application/json": {
+            schema: resolver(z.object({ success: z.literal(true), data: z.array(ProductRecommendationSchema) })),
+          },
+        },
+      },
+      400: { description: "Invalid product ID", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+    },
+  }),
+  async (c) => {
   const productId = Number(c.req.param("id"));
   if (isNaN(productId)) return badRequest(c, "Invalid product ID");
 
@@ -41,7 +106,26 @@ app.get("/products/:id", async (c) => {
 
 // GET /recommendations/users/:id
 // "Product recommendations berdasarkan purchase history + review rating tinggi dari similar users"
-app.get("/users/:id", async (c) => {
+app.get(
+  "/users/:id",
+  describeRoute({
+    tags: ["Recommendations"],
+    summary: "Personalized product recommendations for user",
+    description: "Recommends products based on purchase history and ratings from similar users. Powered by Neo4j.",
+    responses: {
+      200: {
+        description: "Personalized recommendations",
+        content: {
+          "application/json": {
+            schema: resolver(z.object({ success: z.literal(true), data: z.array(UserRecommendationSchema) })),
+          },
+        },
+      },
+      400: { description: "Invalid user ID", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      404: { description: "User not found in graph", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+    },
+  }),
+  async (c) => {
   const userId = Number(c.req.param("id"));
   if (isNaN(userId)) return badRequest(c, "Invalid user ID");
 
@@ -87,7 +171,24 @@ app.get("/users/:id", async (c) => {
 
 // GET /recommendations/trending
 // Products paling banyak dibeli + rating tinggi
-app.get("/trending", async (c) => {
+app.get(
+  "/trending",
+  describeRoute({
+    tags: ["Recommendations"],
+    summary: "Trending products",
+    description: "Returns the most purchased products with high ratings. Powered by Neo4j.",
+    responses: {
+      200: {
+        description: "Trending products",
+        content: {
+          "application/json": {
+            schema: resolver(z.object({ success: z.literal(true), data: z.array(TrendingSchema) })),
+          },
+        },
+      },
+    },
+  }),
+  async (c) => {
   const limit = Math.min(Number(c.req.query("limit") ?? 10), 50);
   const session = getNeo4jDriver().session();
 
@@ -122,7 +223,25 @@ app.get("/trending", async (c) => {
 
 // GET /recommendations/similar-users/:id
 // Users dengan purchase pattern mirip
-app.get("/similar-users/:id", async (c) => {
+app.get(
+  "/similar-users/:id",
+  describeRoute({
+    tags: ["Recommendations"],
+    summary: "Find users with similar purchase patterns",
+    description: "Returns users who have bought the most products in common with the given user. Powered by Neo4j.",
+    responses: {
+      200: {
+        description: "Similar users",
+        content: {
+          "application/json": {
+            schema: resolver(z.object({ success: z.literal(true), data: z.array(SimilarUserSchema) })),
+          },
+        },
+      },
+      400: { description: "Invalid user ID", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+    },
+  }),
+  async (c) => {
   const userId = Number(c.req.param("id"));
   if (isNaN(userId)) return badRequest(c, "Invalid user ID");
 
@@ -156,7 +275,24 @@ app.get("/similar-users/:id", async (c) => {
 
 // GET /recommendations/graph-stats
 // Overview stats dari Neo4j graph
-app.get("/graph-stats", async (c) => {
+app.get(
+  "/graph-stats",
+  describeRoute({
+    tags: ["Recommendations"],
+    summary: "Neo4j graph statistics",
+    description: "Returns aggregate counts of nodes and relationships in the Neo4j graph.",
+    responses: {
+      200: {
+        description: "Graph statistics",
+        content: {
+          "application/json": {
+            schema: resolver(z.object({ success: z.literal(true), data: GraphStatsSchema })),
+          },
+        },
+      },
+    },
+  }),
+  async (c) => {
   const session = getNeo4jDriver().session();
 
   try {

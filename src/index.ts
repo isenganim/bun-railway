@@ -7,6 +7,8 @@ import { db } from "./db";
 import * as schema from "./db/schema";
 import { getNeo4jDriver } from "./db/neo4j";
 import { rateLimiter } from "./middleware/rate-limit";
+import { openAPIRouteHandler } from "hono-openapi";
+import { Scalar } from "@scalar/hono-api-reference";
 
 // Routes
 import authRoute from "./routes/auth";
@@ -105,6 +107,7 @@ app.get("/stats", async (c) => {
 
 // API v1 routes
 const v1 = new Hono();
+
 v1.route("/auth", authRoute);
 v1.route("/users", usersRoute);
 v1.route("/products", productsRoute);
@@ -117,6 +120,66 @@ v1.route("/notifications", notificationsRoute);
 v1.route("/recommendations", recommendationsRoute);
 
 app.route("/api/v1", v1);
+
+// ── OpenAPI spec ──────────────────────────────────────────────────────────────
+app.get(
+  "/openapi.json",
+  openAPIRouteHandler(v1, {
+    documentation: {
+      openapi: "3.1.0",
+      info: {
+        title: "Bun Hono API",
+        version: "2.0.0",
+        description:
+          "E-commerce REST API built with Bun, Hono, Drizzle ORM, and PostgreSQL. " +
+          "Includes auth (JWT), RBAC (admin / moderator / user), products, orders, reviews, wishlists, coupons, categories, notifications, and Neo4j-powered recommendations.",
+        contact: {
+          name: "API Support",
+          email: "support@example.com",
+        },
+      },
+      servers: [
+        { url: "/api/v1", description: "Current server" },
+      ],
+      tags: [
+        { name: "Auth", description: "Register, login, and current-user endpoints" },
+        { name: "Users", description: "User management (RBAC-protected)" },
+        { name: "Products", description: "Product catalog with search and filters" },
+        { name: "Orders", description: "Order placement and status management" },
+        { name: "Reviews", description: "Product reviews and ratings" },
+        { name: "Wishlists", description: "Per-user product wishlists" },
+        { name: "Coupons", description: "Discount coupon management" },
+        { name: "Categories", description: "Product category tree" },
+        { name: "Notifications", description: "User notification inbox" },
+        { name: "Recommendations", description: "Neo4j-powered product recommendations" },
+      ],
+      components: {
+        securitySchemes: {
+          bearerAuth: {
+            type: "http",
+            scheme: "bearer",
+            bearerFormat: "JWT",
+            description: "JWT token obtained from POST /auth/login. Format: Bearer <token>",
+          },
+        },
+      },
+    },
+  }),
+);
+
+// ── Scalar API Reference UI ───────────────────────────────────────────────────
+app.get(
+  "/docs",
+  Scalar({
+    url: "/openapi.json",
+    pageTitle: "Bun Hono API — Reference",
+    theme: "purple",
+    defaultHttpClient: {
+      targetKey: "js",
+      clientKey: "fetch",
+    },
+  }),
+);
 
 // Backward compatibility: keep old routes working
 app.route("/users", usersRoute);
