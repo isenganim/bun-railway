@@ -1,6 +1,8 @@
 import { Hono } from "hono";
+import { describeRoute, resolver } from "hono-openapi";
 import { zValidator } from "@hono/zod-validator";
 import { eq, desc, count } from "drizzle-orm";
+import { z } from "zod";
 import { db } from "../db";
 import { coupons } from "../db/schema";
 import { createCouponSchema, updateCouponSchema, parsePagination } from "../validators";
@@ -9,8 +11,48 @@ import { ok, created, notFound, badRequest, paginate } from "../lib/response";
 
 const app = new Hono();
 
+// ── Shared schemas ────────────────────────────────────────────────────────────
+
+const CouponSchema = z.object({
+  id: z.number(),
+  code: z.string(),
+  discountType: z.enum(["percentage", "fixed"]),
+  discountValue: z.string(),
+  minOrderAmount: z.string().nullable(),
+  maxUsage: z.number().nullable(),
+  currentUsage: z.number(),
+  isActive: z.boolean(),
+  expiresAt: z.string().nullable(),
+  createdAt: z.string(),
+});
+
+const ErrorSchema = z.object({ success: z.literal(false), error: z.string() });
+const MessageSchema = z.object({ success: z.literal(true), data: z.object({ message: z.string() }) });
+const CouponResponseSchema = z.object({ success: z.literal(true), data: CouponSchema });
+const PaginatedCouponsSchema = z.object({
+  success: z.literal(true),
+  data: z.array(CouponSchema),
+  meta: z.object({ total: z.number(), page: z.number(), limit: z.number(), totalPages: z.number() }),
+});
+
 // GET /coupons
-app.get("/", async (c) => {
+app.get(
+  "/",
+  describeRoute({
+    tags: ["Coupons"],
+    summary: "List coupons",
+    description: "Returns a paginated list of all coupons including usage stats and codes. Admin or moderator only.",
+    security: [{ bearerAuth: [] }],
+    responses: {
+      200: { description: "Paginated coupons", content: { "application/json": { schema: resolver(PaginatedCouponsSchema) } } },
+      400: { description: "Invalid pagination", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      401: { description: "Unauthorized", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      403: { description: "Forbidden", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+    },
+  }),
+  authMiddleware(),
+  requireRole("admin", "moderator"),
+  async (c) => {
   const pg = parsePagination(c.req.query("page"), c.req.query("limit"));
   if (!pg) return badRequest(c, "Invalid pagination parameters");
 
@@ -23,7 +65,35 @@ app.get("/", async (c) => {
 });
 
 // GET /coupons/validate/:code
-app.get("/validate/:code", async (c) => {
+app.get(
+  "/validate/:code",
+  describeRoute({
+    tags: ["Coupons"],
+    summary: "Validate coupon code",
+    description: "Checks if a coupon code is valid, active, and not expired or exhausted.",
+    responses: {
+      200: {
+        description: "Coupon validation result",
+        content: {
+          "application/json": {
+            schema: resolver(z.object({
+              success: z.literal(true),
+              data: z.object({
+                code: z.string(),
+                discountType: z.enum(["percentage", "fixed"]),
+                discountValue: z.string(),
+                minOrderAmount: z.string().nullable(),
+                isValid: z.boolean(),
+                issues: z.array(z.string()),
+              }),
+            })),
+          },
+        },
+      },
+      404: { description: "Coupon not found", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+    },
+  }),
+  async (c) => {
   const code = c.req.param("code").toUpperCase();
 
   const [coupon] = await db.select().from(coupons).where(eq(coupons.code, code));
@@ -45,7 +115,21 @@ app.get("/validate/:code", async (c) => {
 });
 
 // POST /coupons (admin only) — catch unique constraint race
-app.post("/", authMiddleware(), requireRole("admin"), zValidator("json", createCouponSchema), async (c) => {
+app.post(
+  "/",
+  describeRoute({
+    tags: ["Coupons"],
+    summary: "Create coupon",
+    description: "Creates a new discount coupon. Admin only.",
+    security: [{ bearerAuth: [] }],
+    responses: {
+      201: { description: "Coupon created", content: { "application/json": { schema: resolver(CouponResponseSchema) } } },
+      400: { description: "Validation error or duplicate code", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      401: { description: "Unauthorized", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      403: { description: "Forbidden", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+    },
+  }),
+  authMiddleware(), requireRole("admin"), zValidator("json", createCouponSchema), async (c) => {
   const body = c.req.valid("json");
 
   if (body.discountType === "percentage" && body.discountValue > 100) {
@@ -73,7 +157,22 @@ app.post("/", authMiddleware(), requireRole("admin"), zValidator("json", createC
 });
 
 // PATCH /coupons/:id (admin only) — validated with Zod
-app.patch("/:id", authMiddleware(), requireRole("admin"), zValidator("json", updateCouponSchema), async (c) => {
+app.patch(
+  "/:id",
+  describeRoute({
+    tags: ["Coupons"],
+    summary: "Update coupon",
+    description: "Updates isActive, maxUsage, or expiresAt on a coupon. Admin only.",
+    security: [{ bearerAuth: [] }],
+    responses: {
+      200: { description: "Coupon updated", content: { "application/json": { schema: resolver(CouponResponseSchema) } } },
+      400: { description: "Validation error", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      401: { description: "Unauthorized", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      403: { description: "Forbidden", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      404: { description: "Coupon not found", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+    },
+  }),
+  authMiddleware(), requireRole("admin"), zValidator("json", updateCouponSchema), async (c) => {
   const id = Number(c.req.param("id"));
   if (isNaN(id)) return badRequest(c, "Invalid ID");
 
@@ -103,7 +202,21 @@ app.patch("/:id", authMiddleware(), requireRole("admin"), zValidator("json", upd
 });
 
 // DELETE /coupons/:id (admin only)
-app.delete("/:id", authMiddleware(), requireRole("admin"), async (c) => {
+app.delete(
+  "/:id",
+  describeRoute({
+    tags: ["Coupons"],
+    summary: "Delete coupon",
+    description: "Permanently deletes a coupon. Admin only.",
+    security: [{ bearerAuth: [] }],
+    responses: {
+      200: { description: "Coupon deleted", content: { "application/json": { schema: resolver(MessageSchema) } } },
+      401: { description: "Unauthorized", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      403: { description: "Forbidden", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      404: { description: "Coupon not found", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+    },
+  }),
+  authMiddleware(), requireRole("admin"), async (c) => {
   const id = Number(c.req.param("id"));
   if (isNaN(id)) return badRequest(c, "Invalid ID");
 

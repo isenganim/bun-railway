@@ -1,6 +1,8 @@
 import { Hono } from "hono";
+import { describeRoute, resolver } from "hono-openapi";
 import { zValidator } from "@hono/zod-validator";
 import { eq, ilike, count, desc } from "drizzle-orm";
+import { z } from "zod";
 import { db } from "../db";
 import { users, orders, reviews } from "../db/schema";
 import { updateUserSchema, parsePagination } from "../validators";
@@ -8,6 +10,35 @@ import { authMiddleware, requireRole, requireOwnerOrRole } from "../middleware/a
 import { ok, created, notFound, badRequest, paginate } from "../lib/response";
 
 const app = new Hono();
+
+// ── Shared schemas ────────────────────────────────────────────────────────────
+
+const UserSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  username: z.string(),
+  role: z.enum(["admin", "user", "moderator"]),
+  status: z.enum(["active", "inactive", "banned"]),
+  bio: z.string().nullable(),
+  avatar: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+const PaginatedUsersSchema = z.object({
+  success: z.literal(true),
+  data: z.array(UserSchema),
+  meta: z.object({
+    total: z.number(),
+    page: z.number(),
+    limit: z.number(),
+    totalPages: z.number(),
+  }),
+});
+
+const UserResponseSchema = z.object({ success: z.literal(true), data: UserSchema });
+const ErrorSchema = z.object({ success: z.literal(false), error: z.string() });
+const MessageSchema = z.object({ success: z.literal(true), data: z.object({ message: z.string() }) });
 
 const safeUserFields = {
   id: users.id,
@@ -23,106 +54,233 @@ const safeUserFields = {
 
 const extractUserId = (c: any) => Number(c.req.param("id"));
 
-// GET /users — public, no email exposed
-app.get("/", async (c) => {
-  const pg = parsePagination(c.req.query("page"), c.req.query("limit"));
-  if (!pg) return badRequest(c, "Invalid pagination parameters");
+// ── GET /users ────────────────────────────────────────────────────────────────
 
-  const search = c.req.query("search");
-  const where = search ? ilike(users.name, `%${search}%`) : undefined;
+app.get(
+  "/",
+  describeRoute({
+    tags: ["Users"],
+    summary: "List users",
+    description: "Returns a paginated list of users. Admin or moderator only. Email is not exposed.",
+    security: [{ bearerAuth: [] }],
+    responses: {
+      200: {
+        description: "Paginated user list",
+        content: { "application/json": { schema: resolver(PaginatedUsersSchema) } },
+      },
+      400: { description: "Invalid pagination", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      401: { description: "Unauthorized", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      403: { description: "Forbidden", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+    },
+  }),
+  authMiddleware(),
+  requireRole("admin", "moderator"),
+  async (c) => {
+    const pg = parsePagination(c.req.query("page"), c.req.query("limit"));
+    if (!pg) return badRequest(c, "Invalid pagination parameters");
 
-  const [data, [{ value: total }]] = await Promise.all([
-    db.select(safeUserFields).from(users).where(where).orderBy(desc(users.createdAt)).limit(pg.limit).offset(pg.offset),
-    db.select({ value: count() }).from(users).where(where),
-  ]);
+    const search = c.req.query("search");
+    const where = search ? ilike(users.name, `%${search}%`) : undefined;
 
-  return paginate(c, data, Number(total), pg.page, pg.limit);
-});
+    const [data, [{ value: total }]] = await Promise.all([
+      db.select(safeUserFields).from(users).where(where).orderBy(desc(users.createdAt)).limit(pg.limit).offset(pg.offset),
+      db.select({ value: count() }).from(users).where(where),
+    ]);
 
-// GET /users/:id — public, no email exposed
-app.get("/:id", async (c) => {
-  const id = Number(c.req.param("id"));
-  if (isNaN(id)) return badRequest(c, "Invalid ID");
+    return paginate(c, data, Number(total), pg.page, pg.limit);
+  },
+);
 
-  const [user] = await db.select(safeUserFields).from(users).where(eq(users.id, id));
-  if (!user) return notFound(c, "User not found");
+// ── GET /users/:id ────────────────────────────────────────────────────────────
 
-  return ok(c, user);
-});
+app.get(
+  "/:id",
+  describeRoute({
+    tags: ["Users"],
+    summary: "Get user by ID",
+    description: "Returns a user profile (no email/password exposed). Requires auth.",
+    security: [{ bearerAuth: [] }],
+    responses: {
+      200: { description: "User found", content: { "application/json": { schema: resolver(UserResponseSchema) } } },
+      401: { description: "Unauthorized", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      404: { description: "User not found", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+    },
+  }),
+  authMiddleware(),
+  async (c) => {
+    const id = Number(c.req.param("id"));
+    if (isNaN(id)) return badRequest(c, "Invalid ID");
 
-// GET /users/:id/orders — auth required, owner or admin
-app.get("/:id/orders", authMiddleware(), requireOwnerOrRole(extractUserId, "admin"), async (c) => {
-  const id = Number(c.req.param("id"));
-  if (isNaN(id)) return badRequest(c, "Invalid ID");
+    const [user] = await db.select(safeUserFields).from(users).where(eq(users.id, id));
+    if (!user) return notFound(c, "User not found");
 
-  const pg = parsePagination(c.req.query("page"), c.req.query("limit"));
-  if (!pg) return badRequest(c, "Invalid pagination parameters");
+    return ok(c, user);
+  },
+);
 
-  const [user] = await db.select({ id: users.id }).from(users).where(eq(users.id, id));
-  if (!user) return notFound(c, "User not found");
+// ── GET /users/:id/orders ─────────────────────────────────────────────────────
 
-  const [data, [{ value: total }]] = await Promise.all([
-    db.select().from(orders).where(eq(orders.userId, id)).orderBy(desc(orders.createdAt)).limit(pg.limit).offset(pg.offset),
-    db.select({ value: count() }).from(orders).where(eq(orders.userId, id)),
-  ]);
+app.get(
+  "/:id/orders",
+  describeRoute({
+    tags: ["Users"],
+    summary: "Get user orders",
+    description: "Returns paginated orders for a user. Requires auth — owner or admin only.",
+    security: [{ bearerAuth: [] }],
+    responses: {
+      200: { description: "Paginated orders" },
+      401: { description: "Unauthorized", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      403: { description: "Forbidden", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      404: { description: "User not found", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+    },
+  }),
+  authMiddleware(),
+  requireOwnerOrRole(extractUserId, "admin"),
+  async (c) => {
+    const id = Number(c.req.param("id"));
+    if (isNaN(id)) return badRequest(c, "Invalid ID");
 
-  return paginate(c, data, Number(total), pg.page, pg.limit);
-});
+    const pg = parsePagination(c.req.query("page"), c.req.query("limit"));
+    if (!pg) return badRequest(c, "Invalid pagination parameters");
 
-// GET /users/:id/reviews — public
-app.get("/:id/reviews", async (c) => {
-  const id = Number(c.req.param("id"));
-  if (isNaN(id)) return badRequest(c, "Invalid ID");
+    const [user] = await db.select({ id: users.id }).from(users).where(eq(users.id, id));
+    if (!user) return notFound(c, "User not found");
 
-  const [user] = await db.select({ id: users.id }).from(users).where(eq(users.id, id));
-  if (!user) return notFound(c, "User not found");
+    const [data, [{ value: total }]] = await Promise.all([
+      db.select().from(orders).where(eq(orders.userId, id)).orderBy(desc(orders.createdAt)).limit(pg.limit).offset(pg.offset),
+      db.select({ value: count() }).from(orders).where(eq(orders.userId, id)),
+    ]);
 
-  const data = await db.select().from(reviews).where(eq(reviews.userId, id)).orderBy(desc(reviews.createdAt));
+    return paginate(c, data, Number(total), pg.page, pg.limit);
+  },
+);
 
-  return ok(c, data);
-});
+// ── GET /users/:id/reviews ────────────────────────────────────────────────────
 
-// POST /users
-app.post("/", async (c) => {
-  const body = await c.req.json().catch(() => null);
-  if (!body?.name || !body?.email || !body?.username)
-    return badRequest(c, "name, email, username are required");
+app.get(
+  "/:id/reviews",
+  describeRoute({
+    tags: ["Users"],
+    summary: "Get user reviews",
+    description: "Returns all reviews written by a user. Requires auth.",
+    security: [{ bearerAuth: [] }],
+    responses: {
+      200: { description: "List of reviews" },
+      401: { description: "Unauthorized", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      404: { description: "User not found", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+    },
+  }),
+  authMiddleware(),
+  async (c) => {
+    const id = Number(c.req.param("id"));
+    if (isNaN(id)) return badRequest(c, "Invalid ID");
 
-  const [user] = await db.insert(users).values({
-    name: body.name,
-    email: body.email,
-    username: body.username,
-    bio: body.bio,
-  }).returning();
+    const [user] = await db.select({ id: users.id }).from(users).where(eq(users.id, id));
+    if (!user) return notFound(c, "User not found");
 
-  return created(c, user);
-});
+    const data = await db.select().from(reviews).where(eq(reviews.userId, id)).orderBy(desc(reviews.createdAt));
 
-// PATCH /users/:id — auth required, owner or admin, safe projection
-app.patch("/:id", authMiddleware(), requireOwnerOrRole(extractUserId, "admin"), zValidator("json", updateUserSchema), async (c) => {
-  const id = Number(c.req.param("id"));
-  if (isNaN(id)) return badRequest(c, "Invalid ID");
+    return ok(c, data);
+  },
+);
 
-  const body = c.req.valid("json");
+// ── POST /users ───────────────────────────────────────────────────────────────
 
-  const [user] = await db.update(users)
-    .set({ ...body, updatedAt: new Date() })
-    .where(eq(users.id, id))
-    .returning(safeUserFields);
+app.post(
+  "/",
+  describeRoute({
+    tags: ["Users"],
+    summary: "Create user (no password)",
+    description: "Creates a user without a password. For seeding/admin use only. Use /auth/register for normal signup. Admin only.",
+    security: [{ bearerAuth: [] }],
+    responses: {
+      201: { description: "User created", content: { "application/json": { schema: resolver(UserResponseSchema) } } },
+      400: { description: "Missing required fields", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      401: { description: "Unauthorized", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      403: { description: "Forbidden", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+    },
+  }),
+  authMiddleware(),
+  requireRole("admin"),
+  async (c) => {
+    const body = await c.req.json().catch(() => null);
+    if (!body?.name || !body?.email || !body?.username)
+      return badRequest(c, "name, email, username are required");
 
-  if (!user) return notFound(c, "User not found");
-  return ok(c, user);
-});
+    const [user] = await db.insert(users).values({
+      name: body.name,
+      email: body.email,
+      username: body.username,
+      bio: body.bio,
+    }).returning(safeUserFields);
 
-// DELETE /users/:id (admin only)
-app.delete("/:id", authMiddleware(), requireRole("admin"), async (c) => {
-  const id = Number(c.req.param("id"));
-  if (isNaN(id)) return badRequest(c, "Invalid ID");
+    return created(c, user);
+  },
+);
 
-  const [user] = await db.delete(users).where(eq(users.id, id)).returning();
-  if (!user) return notFound(c, "User not found");
+// ── PATCH /users/:id ──────────────────────────────────────────────────────────
 
-  return ok(c, { message: "User deleted" });
-});
+app.patch(
+  "/:id",
+  describeRoute({
+    tags: ["Users"],
+    summary: "Update user",
+    description: "Updates name, bio, or avatar. Requires auth — owner or admin only.",
+    security: [{ bearerAuth: [] }],
+    responses: {
+      200: { description: "User updated", content: { "application/json": { schema: resolver(UserResponseSchema) } } },
+      400: { description: "Invalid input", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      401: { description: "Unauthorized", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      403: { description: "Forbidden", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      404: { description: "User not found", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+    },
+  }),
+  authMiddleware(),
+  requireOwnerOrRole(extractUserId, "admin"),
+  zValidator("json", updateUserSchema),
+  async (c) => {
+    const id = Number(c.req.param("id"));
+    if (isNaN(id)) return badRequest(c, "Invalid ID");
+
+    const body = c.req.valid("json");
+
+    const [user] = await db.update(users)
+      .set({ ...body, updatedAt: new Date() })
+      .where(eq(users.id, id))
+      .returning(safeUserFields);
+
+    if (!user) return notFound(c, "User not found");
+    return ok(c, user);
+  },
+);
+
+// ── DELETE /users/:id ─────────────────────────────────────────────────────────
+
+app.delete(
+  "/:id",
+  describeRoute({
+    tags: ["Users"],
+    summary: "Delete user",
+    description: "Permanently deletes a user. Admin only.",
+    security: [{ bearerAuth: [] }],
+    responses: {
+      200: { description: "User deleted", content: { "application/json": { schema: resolver(MessageSchema) } } },
+      401: { description: "Unauthorized", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      403: { description: "Forbidden", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      404: { description: "User not found", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+    },
+  }),
+  authMiddleware(),
+  requireRole("admin"),
+  async (c) => {
+    const id = Number(c.req.param("id"));
+    if (isNaN(id)) return badRequest(c, "Invalid ID");
+
+    const [user] = await db.delete(users).where(eq(users.id, id)).returning();
+    if (!user) return notFound(c, "User not found");
+
+    return ok(c, { message: "User deleted" });
+  },
+);
 
 export default app;
