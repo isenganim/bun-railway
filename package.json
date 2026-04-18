@@ -10,6 +10,7 @@
     "neo4j:sync": "bun run src/scripts/sync-to-neo4j.ts"
   },
   "dependencies": {
+    "@hono/standard-validator": "^0.2.0",
     "@hono/zod-validator": "^0.7.6",
     "@scalar/hono-api-reference": "^0.10.9",
     "drizzle-orm": "^0.45.2",
