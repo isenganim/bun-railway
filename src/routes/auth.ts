@@ -31,7 +31,6 @@ app.post("/register", zValidator("json", registerSchema), async (c) => {
       role: users.role,
     });
   } catch (err: any) {
-    // Postgres unique_violation
     if (err?.code === "23505") {
       const detail = String(err?.detail || err?.message || "");
       const field = detail.includes("email") ? "Email" : "Username";
@@ -45,7 +44,7 @@ app.post("/register", zValidator("json", registerSchema), async (c) => {
   return created(c, { user, token });
 });
 
-// POST /auth/login
+// POST /auth/login — verify password first, then check status (no info leak)
 app.post("/login", zValidator("json", loginSchema), async (c) => {
   const body = c.req.valid("json");
 
@@ -54,13 +53,14 @@ app.post("/login", zValidator("json", loginSchema), async (c) => {
     return c.json({ success: false, error: "Invalid email or password" }, 401);
   }
 
-  if (user.status === "banned") {
-    return c.json({ success: false, error: "Account is banned" }, 403);
-  }
-
   const valid = await verifyPassword(body.password, user.passwordHash);
   if (!valid) {
     return c.json({ success: false, error: "Invalid email or password" }, 401);
+  }
+
+  // Check status AFTER password verification to avoid leaking account state
+  if (user.status !== "active") {
+    return c.json({ success: false, error: "Account is not active" }, 403);
   }
 
   const token = await generateToken({ id: user.id, role: user.role, username: user.username });

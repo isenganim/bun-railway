@@ -1,19 +1,20 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
-import { eq, count, desc, sql } from "drizzle-orm";
+import { eq, count, desc, sql, and, isNull, or } from "drizzle-orm";
 import { db } from "../db";
 import { orders, orderItems, orderStatusHistory, products, users, coupons, notifications } from "../db/schema";
-import { createOrderSchema, updateOrderStatusSchema } from "../validators";
+import { createOrderSchema, updateOrderStatusSchema, parsePagination } from "../validators";
 import { authMiddleware, requireRole, getCurrentUser } from "../middleware/auth";
 import { ok, created, notFound, badRequest, paginate } from "../lib/response";
 
 const app = new Hono();
 
+const STAFF_ROLES = ["admin", "moderator"];
+
 // GET /orders (admin/moderator only)
 app.get("/", authMiddleware(), requireRole("admin", "moderator"), async (c) => {
-  const page = Number(c.req.query("page") ?? 1);
-  const limit = Math.min(Number(c.req.query("limit") ?? 20), 100);
-  const offset = (page - 1) * limit;
+  const pg = parsePagination(c.req.query("page"), c.req.query("limit"));
+  if (!pg) return badRequest(c, "Invalid pagination parameters");
 
   const [data, [{ value: total }]] = await Promise.all([
     db.select({
@@ -30,15 +31,15 @@ app.get("/", authMiddleware(), requireRole("admin", "moderator"), async (c) => {
       .from(orders)
       .innerJoin(users, eq(orders.userId, users.id))
       .orderBy(desc(orders.createdAt))
-      .limit(limit)
-      .offset(offset),
+      .limit(pg.limit)
+      .offset(pg.offset),
     db.select({ value: count() }).from(orders),
   ]);
 
-  return paginate(c, data, Number(total), page, limit);
+  return paginate(c, data, Number(total), pg.page, pg.limit);
 });
 
-// GET /orders/:id — auth required, owner or admin
+// GET /orders/:id — auth required, owner or staff
 app.get("/:id", authMiddleware(), async (c) => {
   const id = Number(c.req.param("id"));
   if (isNaN(id)) return badRequest(c, "Invalid ID");
@@ -47,7 +48,7 @@ app.get("/:id", authMiddleware(), async (c) => {
   if (!order) return notFound(c, "Order not found");
 
   const user = getCurrentUser(c);
-  if (!user || (order.userId !== user.sub && user.role !== "admin")) {
+  if (!user || (order.userId !== user.sub && !STAFF_ROLES.includes(user.role))) {
     return c.json({ success: false, error: "Forbidden" }, 403);
   }
 
@@ -64,7 +65,7 @@ app.get("/:id", authMiddleware(), async (c) => {
   return ok(c, { ...order, items });
 });
 
-// GET /orders/:id/tracking — auth required, owner or admin
+// GET /orders/:id/tracking — auth required, owner or staff
 app.get("/:id/tracking", authMiddleware(), async (c) => {
   const id = Number(c.req.param("id"));
   if (isNaN(id)) return badRequest(c, "Invalid ID");
@@ -81,7 +82,7 @@ app.get("/:id/tracking", authMiddleware(), async (c) => {
   if (!order) return notFound(c, "Order not found");
 
   const user = getCurrentUser(c);
-  if (!user || (order.userId !== user.sub && user.role !== "admin")) {
+  if (!user || (order.userId !== user.sub && !STAFF_ROLES.includes(user.role))) {
     return c.json({ success: false, error: "Forbidden" }, 403);
   }
 
@@ -93,7 +94,7 @@ app.get("/:id/tracking", authMiddleware(), async (c) => {
   return ok(c, { ...order, history });
 });
 
-// POST /orders — auth required, userId from JWT, wrapped in transaction
+// POST /orders — auth required, userId from JWT, atomic stock + coupon in transaction
 app.post("/", authMiddleware(), zValidator("json", createOrderSchema), async (c) => {
   const body = c.req.valid("json");
   const currentUser = getCurrentUser(c);
@@ -107,7 +108,6 @@ app.post("/", authMiddleware(), zValidator("json", createOrderSchema), async (c)
   // Validate all products and stock before any mutations
   let totalAmount = 0;
   const itemsToInsert: { productId: number; quantity: number; unitPrice: string }[] = [];
-  const stockUpdates: { productId: number; newStock: number }[] = [];
 
   for (const item of body.items) {
     const [product] = await db.select().from(products).where(eq(products.id, item.productId));
@@ -117,13 +117,12 @@ app.post("/", authMiddleware(), zValidator("json", createOrderSchema), async (c)
     const price = Number(product.price);
     totalAmount += price * item.quantity;
     itemsToInsert.push({ productId: product.id, quantity: item.quantity, unitPrice: String(price) });
-    stockUpdates.push({ productId: product.id, newStock: product.stock - item.quantity });
   }
 
   // Validate coupon before any mutations
   let discountAmount = 0;
   let couponId: number | undefined;
-  let couponToUpdate: { id: number; currentUsage: number } | undefined;
+  let hasCoupon = false;
 
   if (body.couponCode) {
     const [coupon] = await db.select().from(coupons).where(eq(coupons.code, body.couponCode.toUpperCase()));
@@ -141,25 +140,33 @@ app.post("/", authMiddleware(), zValidator("json", createOrderSchema), async (c)
     }
 
     couponId = coupon.id;
-    couponToUpdate = { id: coupon.id, currentUsage: coupon.currentUsage };
+    hasCoupon = true;
   }
 
   const finalAmount = totalAmount - discountAmount;
 
-  // All validation passed — execute mutations in transaction
+  // All validation passed — execute mutations in transaction with atomic operations
   const order = await db.transaction(async (tx) => {
-    // Decrement stock
-    for (const su of stockUpdates) {
+    // Atomic stock decrement using SQL expression
+    for (const item of itemsToInsert) {
       await tx.update(products)
-        .set({ stock: su.newStock })
-        .where(eq(products.id, su.productId));
+        .set({ stock: sql`${products.stock} - ${item.quantity}` })
+        .where(eq(products.id, item.productId));
     }
 
-    // Atomic coupon usage increment
-    if (couponToUpdate) {
-      await tx.update(coupons)
+    // Atomic coupon usage increment with maxUsage guard in WHERE
+    if (hasCoupon && couponId) {
+      const [updated] = await tx.update(coupons)
         .set({ currentUsage: sql`${coupons.currentUsage} + 1` })
-        .where(eq(coupons.id, couponToUpdate.id));
+        .where(and(
+          eq(coupons.id, couponId),
+          or(isNull(coupons.maxUsage), sql`${coupons.currentUsage} < ${coupons.maxUsage}`),
+        ))
+        .returning({ id: coupons.id });
+
+      if (!updated) {
+        throw new Error("COUPON_LIMIT_REACHED");
+      }
     }
 
     const [newOrder] = await tx.insert(orders).values({
@@ -180,31 +187,36 @@ app.post("/", authMiddleware(), zValidator("json", createOrderSchema), async (c)
     });
 
     return newOrder;
+  }).catch((err) => {
+    if (err.message === "COUPON_LIMIT_REACHED") return null;
+    throw err;
   });
+
+  if (!order) return badRequest(c, "Coupon usage limit reached");
 
   return created(c, order);
 });
 
-// PATCH /orders/:id/status — admin/moderator only, wrapped in transaction
+// PATCH /orders/:id/status — admin/moderator only, SELECT inside transaction
 app.patch("/:id/status", authMiddleware(), requireRole("admin", "moderator"), zValidator("json", updateOrderStatusSchema), async (c) => {
   const id = Number(c.req.param("id"));
   if (isNaN(id)) return badRequest(c, "Invalid ID");
 
   const body = c.req.valid("json");
 
-  const [existing] = await db.select().from(orders).where(eq(orders.id, id));
-  if (!existing) return notFound(c, "Order not found");
+  // Wrap everything in a transaction including the read
+  const result = await db.transaction(async (tx) => {
+    const [existing] = await tx.select().from(orders).where(eq(orders.id, id));
+    if (!existing) return null;
 
-  const updateData: Record<string, unknown> = {
-    status: body.status,
-    updatedAt: new Date(),
-  };
-  if (body.trackingNumber) updateData.trackingNumber = body.trackingNumber;
-  if (body.carrier) updateData.carrier = body.carrier;
-  if (body.estimatedDelivery) updateData.estimatedDelivery = new Date(body.estimatedDelivery);
+    const updateData: Record<string, unknown> = {
+      status: body.status,
+      updatedAt: new Date(),
+    };
+    if (body.trackingNumber) updateData.trackingNumber = body.trackingNumber;
+    if (body.carrier) updateData.carrier = body.carrier;
+    if (body.estimatedDelivery) updateData.estimatedDelivery = new Date(body.estimatedDelivery);
 
-  // Wrap update + history + notification in a transaction
-  const order = await db.transaction(async (tx) => {
     const [updated] = await tx.update(orders)
       .set(updateData)
       .where(eq(orders.id, id))
@@ -228,7 +240,9 @@ app.patch("/:id/status", authMiddleware(), requireRole("admin", "moderator"), zV
     return updated;
   });
 
-  return ok(c, order);
+  if (!result) return notFound(c, "Order not found");
+
+  return ok(c, result);
 });
 
 export default app;

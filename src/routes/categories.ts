@@ -13,7 +13,6 @@ const app = new Hono();
 app.get("/", async (c) => {
   const data = await db.select().from(categories);
 
-  // Build tree structure
   const categoryMap = new Map<number, any>();
   const roots: any[] = [];
 
@@ -84,7 +83,7 @@ app.post("/", authMiddleware(), requireRole("admin"), zValidator("json", createC
   return created(c, category);
 });
 
-// PATCH /categories/:id (admin only) — validated with Zod
+// PATCH /categories/:id (admin only) — validated, cycle detection via ancestor walk
 app.patch("/:id", authMiddleware(), requireRole("admin"), zValidator("json", updateCategorySchema), async (c) => {
   const id = Number(c.req.param("id"));
   if (isNaN(id)) return badRequest(c, "Invalid ID");
@@ -99,14 +98,24 @@ app.patch("/:id", authMiddleware(), requireRole("admin"), zValidator("json", upd
   if (body.description !== undefined) updateData.description = body.description;
   if (body.icon !== undefined) updateData.icon = body.icon;
 
-  // Validate parentId
+  // Validate parentId — walk ancestor chain to detect cycles
   if (body.parentId !== undefined) {
-    if (body.parentId === id) return badRequest(c, "Category cannot be its own parent");
-    if (body.parentId) {
-      const [parent] = await db.select({ id: categories.id }).from(categories).where(eq(categories.id, body.parentId));
-      if (!parent) return notFound(c, "Parent category not found");
+    if (body.parentId === null) {
+      // Allow clearing parent (move to root)
+      updateData.parentId = null;
+    } else {
+      let currentParentId: number | null = body.parentId;
+      while (currentParentId) {
+        if (currentParentId === id) return badRequest(c, "Category cannot be moved under its own descendant");
+        const [ancestor] = await db
+          .select({ id: categories.id, parentId: categories.parentId })
+          .from(categories)
+          .where(eq(categories.id, currentParentId));
+        if (!ancestor) return notFound(c, "Parent category not found");
+        currentParentId = ancestor.parentId;
+      }
+      updateData.parentId = body.parentId;
     }
-    updateData.parentId = body.parentId;
   }
 
   // Check slug uniqueness if name changed

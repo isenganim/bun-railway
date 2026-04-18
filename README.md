@@ -25,7 +25,7 @@ REST API dengan Bun, Hono, PostgreSQL (Drizzle ORM), Neo4j — siap deploy ke Ra
 - Neo4j-powered recommendations (collaborative filtering, trending)
 - Rate limiting
 - API versioning (`/api/v1/`)
-- Zod input validation on all write endpoints
+- Zod input validation on write endpoints
 
 ## Setup Lokal
 

@@ -36,7 +36,7 @@ app.get("/product/:productId", async (c) => {
   });
 });
 
-// POST /reviews — auth required, userId from JWT
+// POST /reviews — auth required, userId from JWT, validate user still exists
 app.post("/", authMiddleware(), zValidator("json", createReviewSchema), async (c) => {
   const body = c.req.valid("json");
   const currentUser = getCurrentUser(c);
@@ -44,7 +44,12 @@ app.post("/", authMiddleware(), zValidator("json", createReviewSchema), async (c
 
   const userId = currentUser.sub;
 
-  const [product] = await db.select({ id: products.id }).from(products).where(eq(products.id, body.productId));
+  const [[user], [product]] = await Promise.all([
+    db.select({ id: users.id }).from(users).where(eq(users.id, userId)),
+    db.select({ id: products.id }).from(products).where(eq(products.id, body.productId)),
+  ]);
+
+  if (!user) return notFound(c, "User not found");
   if (!product) return notFound(c, "Product not found");
 
   const [review] = await db.insert(reviews).values({

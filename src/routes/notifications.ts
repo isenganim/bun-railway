@@ -3,7 +3,7 @@ import { zValidator } from "@hono/zod-validator";
 import { eq, and, count, desc } from "drizzle-orm";
 import { db } from "../db";
 import { notifications, users } from "../db/schema";
-import { createNotificationSchema } from "../validators";
+import { createNotificationSchema, parsePagination } from "../validators";
 import { authMiddleware, requireRole, requireOwnerOrRole, getCurrentUser } from "../middleware/auth";
 import { ok, created, notFound, badRequest, paginate } from "../lib/response";
 
@@ -16,10 +16,10 @@ app.get("/users/:userId", authMiddleware(), requireOwnerOrRole(extractUserId, "a
   const userId = Number(c.req.param("userId"));
   if (isNaN(userId)) return badRequest(c, "Invalid user ID");
 
-  const page = Number(c.req.query("page") ?? 1);
-  const limit = Math.min(Number(c.req.query("limit") ?? 20), 100);
+  const pg = parsePagination(c.req.query("page"), c.req.query("limit"));
+  if (!pg) return badRequest(c, "Invalid pagination parameters");
+
   const unreadOnly = c.req.query("unread") === "true";
-  const offset = (page - 1) * limit;
 
   const conditions = [eq(notifications.userId, userId)];
   if (unreadOnly) conditions.push(eq(notifications.isRead, false));
@@ -27,11 +27,11 @@ app.get("/users/:userId", authMiddleware(), requireOwnerOrRole(extractUserId, "a
   const where = and(...conditions);
 
   const [data, [{ value: total }]] = await Promise.all([
-    db.select().from(notifications).where(where).orderBy(desc(notifications.createdAt)).limit(limit).offset(offset),
+    db.select().from(notifications).where(where).orderBy(desc(notifications.createdAt)).limit(pg.limit).offset(pg.offset),
     db.select({ value: count() }).from(notifications).where(where),
   ]);
 
-  return paginate(c, data, Number(total), page, limit);
+  return paginate(c, data, Number(total), pg.page, pg.limit);
 });
 
 // GET /notifications/users/:userId/unread-count — auth required, owner or admin
@@ -51,7 +51,6 @@ app.patch("/:id/read", authMiddleware(), async (c) => {
   const id = Number(c.req.param("id"));
   if (isNaN(id)) return badRequest(c, "Invalid ID");
 
-  // Fetch notification to check ownership
   const [existing] = await db.select().from(notifications).where(eq(notifications.id, id));
   if (!existing) return notFound(c, "Notification not found");
 

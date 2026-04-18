@@ -3,7 +3,7 @@ import { zValidator } from "@hono/zod-validator";
 import { eq, desc, count } from "drizzle-orm";
 import { db } from "../db";
 import { coupons } from "../db/schema";
-import { createCouponSchema, updateCouponSchema } from "../validators";
+import { createCouponSchema, updateCouponSchema, parsePagination } from "../validators";
 import { authMiddleware, requireRole } from "../middleware/auth";
 import { ok, created, notFound, badRequest, paginate } from "../lib/response";
 
@@ -11,16 +11,15 @@ const app = new Hono();
 
 // GET /coupons
 app.get("/", async (c) => {
-  const page = Number(c.req.query("page") ?? 1);
-  const limit = Math.min(Number(c.req.query("limit") ?? 20), 100);
-  const offset = (page - 1) * limit;
+  const pg = parsePagination(c.req.query("page"), c.req.query("limit"));
+  if (!pg) return badRequest(c, "Invalid pagination parameters");
 
   const [data, [{ value: total }]] = await Promise.all([
-    db.select().from(coupons).orderBy(desc(coupons.createdAt)).limit(limit).offset(offset),
+    db.select().from(coupons).orderBy(desc(coupons.createdAt)).limit(pg.limit).offset(pg.offset),
     db.select({ value: count() }).from(coupons),
   ]);
 
-  return paginate(c, data, Number(total), page, limit);
+  return paginate(c, data, Number(total), pg.page, pg.limit);
 });
 
 // GET /coupons/validate/:code
@@ -45,25 +44,30 @@ app.get("/validate/:code", async (c) => {
   });
 });
 
-// POST /coupons (admin only)
+// POST /coupons (admin only) — catch unique constraint race
 app.post("/", authMiddleware(), requireRole("admin"), zValidator("json", createCouponSchema), async (c) => {
   const body = c.req.valid("json");
-
-  const [existing] = await db.select({ id: coupons.id }).from(coupons).where(eq(coupons.code, body.code));
-  if (existing) return badRequest(c, "Coupon code already exists");
 
   if (body.discountType === "percentage" && body.discountValue > 100) {
     return badRequest(c, "Percentage discount cannot exceed 100");
   }
 
-  const [coupon] = await db.insert(coupons).values({
-    code: body.code,
-    discountType: body.discountType,
-    discountValue: String(body.discountValue),
-    minOrderAmount: String(body.minOrderAmount),
-    maxUsage: body.maxUsage,
-    expiresAt: body.expiresAt ? new Date(body.expiresAt) : undefined,
-  }).returning();
+  let coupon;
+  try {
+    [coupon] = await db.insert(coupons).values({
+      code: body.code,
+      discountType: body.discountType,
+      discountValue: String(body.discountValue),
+      minOrderAmount: String(body.minOrderAmount),
+      maxUsage: body.maxUsage,
+      expiresAt: body.expiresAt ? new Date(body.expiresAt) : undefined,
+    }).returning();
+  } catch (err: any) {
+    if (err?.code === "23505") {
+      return badRequest(c, "Coupon code already exists");
+    }
+    throw err;
+  }
 
   return created(c, coupon);
 });

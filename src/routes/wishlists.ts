@@ -4,7 +4,7 @@ import { eq, and, count } from "drizzle-orm";
 import { db } from "../db";
 import { wishlists, products, users } from "../db/schema";
 import { wishlistSchema } from "../validators";
-import { authMiddleware, requireOwnerOrRole, getCurrentUser } from "../middleware/auth";
+import { authMiddleware, requireOwnerOrRole } from "../middleware/auth";
 import { ok, created, notFound, badRequest } from "../lib/response";
 
 const app = new Hono();
@@ -39,17 +39,21 @@ app.get("/users/:userId", authMiddleware(), requireOwnerOrRole(extractUserId, "a
   return ok(c, data);
 });
 
-// POST /wishlists/users/:userId — auth required, owner or admin
+// POST /wishlists/users/:userId — auth required, owner or admin, validate user+product
 app.post("/users/:userId", authMiddleware(), requireOwnerOrRole(extractUserId, "admin"), zValidator("json", wishlistSchema), async (c) => {
   const userId = Number(c.req.param("userId"));
   if (isNaN(userId)) return badRequest(c, "Invalid user ID");
 
   const body = c.req.valid("json");
 
-  const [product] = await db.select({ id: products.id }).from(products).where(eq(products.id, body.productId));
+  const [[user], [product]] = await Promise.all([
+    db.select({ id: users.id }).from(users).where(eq(users.id, userId)),
+    db.select({ id: products.id }).from(products).where(eq(products.id, body.productId)),
+  ]);
+
+  if (!user) return notFound(c, "User not found");
   if (!product) return notFound(c, "Product not found");
 
-  // Check if already in wishlist
   const [existing] = await db.select({ id: wishlists.id })
     .from(wishlists)
     .where(and(eq(wishlists.userId, userId), eq(wishlists.productId, body.productId)));

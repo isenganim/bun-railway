@@ -1,4 +1,5 @@
-import { pgTable, serial, text, varchar, integer, decimal, boolean, timestamp, pgEnum, uniqueIndex, type AnyPgColumn } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, varchar, integer, decimal, boolean, timestamp, pgEnum, uniqueIndex, index, type AnyPgColumn, check } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 export const roleEnum = pgEnum("role", ["admin", "user", "moderator"]);
 export const statusEnum = pgEnum("status", ["active", "inactive", "banned"]);
@@ -65,7 +66,9 @@ export const orderStatusHistory = pgTable("order_status_history", {
   toStatus: orderStatusEnum("to_status").notNull(),
   note: text("note"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (table) => [
+  index("order_status_history_order_id_idx").on(table.orderId),
+]);
 
 export const reviews = pgTable("reviews", {
   id: serial("id").primaryKey(),
@@ -78,8 +81,8 @@ export const reviews = pgTable("reviews", {
 
 export const wishlists = pgTable("wishlists", {
   id: serial("id").primaryKey(),
-  userId: integer("user_id").references(() => users.id).notNull(),
-  productId: integer("product_id").references(() => products.id).notNull(),
+  userId: integer("user_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+  productId: integer("product_id").references(() => products.id, { onDelete: "cascade" }).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (table) => [
   uniqueIndex("wishlists_user_product_idx").on(table.userId, table.productId),
@@ -106,15 +109,21 @@ export const coupons = pgTable("coupons", {
   isActive: boolean("is_active").default(true).notNull(),
   expiresAt: timestamp("expires_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (table) => [
+  check("coupons_discount_value_check", sql`(${table.discountType} = 'percentage' AND ${table.discountValue} > 0 AND ${table.discountValue} <= 100) OR (${table.discountType} = 'fixed' AND ${table.discountValue} > 0)`),
+  check("coupons_min_order_amount_check", sql`${table.minOrderAmount} >= 0`),
+  check("coupons_usage_check", sql`${table.currentUsage} >= 0 AND (${table.maxUsage} IS NULL OR ${table.maxUsage} >= ${table.currentUsage})`),
+]);
 
 export const notifications = pgTable("notifications", {
   id: serial("id").primaryKey(),
-  userId: integer("user_id").references(() => users.id).notNull(),
+  userId: integer("user_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
   type: notificationTypeEnum("type").notNull(),
   title: varchar("title", { length: 200 }).notNull(),
   message: text("message").notNull(),
   isRead: boolean("is_read").default(false).notNull(),
   metadata: text("metadata"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (table) => [
+  index("notifications_user_id_idx").on(table.userId),
+]);

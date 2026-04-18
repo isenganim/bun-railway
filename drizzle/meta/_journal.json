@@ -22,6 +22,13 @@
       "when": 1776485122432,
       "tag": "0002_fixed_valkyrie",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1776493164011,
+      "tag": "0003_sad_kitty_pryde",
+      "breakpoints": true
     }
   ]
 }

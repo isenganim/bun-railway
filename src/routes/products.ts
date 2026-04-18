@@ -3,28 +3,27 @@ import { zValidator } from "@hono/zod-validator";
 import { eq, ilike, count, desc, and, gte, lte, avg, sql } from "drizzle-orm";
 import { db } from "../db";
 import { products, reviews, orderItems } from "../db/schema";
-import { createProductSchema, updateProductSchema } from "../validators";
+import { createProductSchema, updateProductSchema, parsePagination, parseLimit } from "../validators";
 import { authMiddleware, requireRole } from "../middleware/auth";
 import { ok, created, notFound, badRequest, paginate } from "../lib/response";
 
 const app = new Hono();
 
-// GET /products — with validated price range
+// GET /products — with validated price range and pagination
 app.get("/", async (c) => {
-  const page = Number(c.req.query("page") ?? 1);
-  const limit = Math.min(Number(c.req.query("limit") ?? 20), 100);
+  const pg = parsePagination(c.req.query("page"), c.req.query("limit"));
+  if (!pg) return badRequest(c, "Invalid pagination parameters");
+
   const search = c.req.query("search");
   const category = c.req.query("category");
   const minPriceRaw = c.req.query("minPrice");
   const maxPriceRaw = c.req.query("maxPrice");
   const sort = c.req.query("sort");
-  const offset = (page - 1) * limit;
 
   const conditions = [];
   if (search) conditions.push(ilike(products.name, `%${search}%`));
   if (category) conditions.push(eq(products.category, category as any));
 
-  // Validate price params as numbers
   if (minPriceRaw) {
     const minPrice = Number(minPriceRaw);
     if (isNaN(minPrice) || minPrice < 0) return badRequest(c, "minPrice must be a non-negative number");
@@ -47,16 +46,17 @@ app.get("/", async (c) => {
   }
 
   const [data, [{ value: total }]] = await Promise.all([
-    db.select().from(products).where(where).orderBy(orderBy).limit(limit).offset(offset),
+    db.select().from(products).where(where).orderBy(orderBy).limit(pg.limit).offset(pg.offset),
     db.select({ value: count() }).from(products).where(where),
   ]);
 
-  return paginate(c, data, Number(total), page, limit);
+  return paginate(c, data, Number(total), pg.page, pg.limit);
 });
 
 // GET /products/top-rated
 app.get("/top-rated", async (c) => {
-  const limit = Math.min(Number(c.req.query("limit") ?? 10), 50);
+  const limit = parseLimit(c.req.query("limit"), 10, 50);
+  if (limit === null) return badRequest(c, "limit must be a positive integer");
 
   const data = await db.select({
     id: products.id,
@@ -80,7 +80,8 @@ app.get("/top-rated", async (c) => {
 
 // GET /products/best-sellers
 app.get("/best-sellers", async (c) => {
-  const limit = Math.min(Number(c.req.query("limit") ?? 10), 50);
+  const limit = parseLimit(c.req.query("limit"), 10, 50);
+  if (limit === null) return badRequest(c, "limit must be a positive integer");
 
   const data = await db.select({
     id: products.id,
@@ -132,7 +133,7 @@ app.post("/", authMiddleware(), requireRole("admin", "moderator"), zValidator("j
   return created(c, product);
 });
 
-// PATCH /products/:id (admin/moderator only)
+// PATCH /products/:id (admin/moderator only) — reject empty updates
 app.patch("/:id", authMiddleware(), requireRole("admin", "moderator"), zValidator("json", updateProductSchema), async (c) => {
   const id = Number(c.req.param("id"));
   if (isNaN(id)) return badRequest(c, "Invalid ID");
@@ -145,6 +146,8 @@ app.patch("/:id", authMiddleware(), requireRole("admin", "moderator"), zValidato
   if (body.price !== undefined) updateData.price = String(body.price);
   if (body.stock !== undefined) updateData.stock = body.stock;
   if (body.isActive !== undefined) updateData.isActive = body.isActive;
+
+  if (Object.keys(updateData).length === 0) return badRequest(c, "No valid fields to update");
 
   const [product] = await db.update(products)
     .set(updateData)

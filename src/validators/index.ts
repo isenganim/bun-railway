@@ -37,9 +37,9 @@ export const updateProductSchema = z.object({
   price: z.number().positive().optional(),
   stock: z.number().int().min(0).optional(),
   isActive: z.boolean().optional(),
-});
+}).refine((d) => Object.keys(d).length > 0, { message: "No fields to update" });
 
-// Orders — userId removed, derived from JWT
+// Orders — userId derived from JWT
 export const createOrderSchema = z.object({
   shippingAddress: z.string().min(5),
   notes: z.string().optional(),
@@ -47,7 +47,10 @@ export const createOrderSchema = z.object({
   items: z.array(z.object({
     productId: z.number().int().positive(),
     quantity: z.number().int().positive(),
-  })).min(1),
+  })).min(1).refine(
+    (items) => new Set(items.map((i) => i.productId)).size === items.length,
+    { message: "Duplicate productId entries are not allowed" },
+  ),
 });
 
 export const updateOrderStatusSchema = z.object({
@@ -58,7 +61,7 @@ export const updateOrderStatusSchema = z.object({
   note: z.string().optional(),
 });
 
-// Reviews — userId removed, derived from JWT
+// Reviews — userId derived from JWT
 export const createReviewSchema = z.object({
   productId: z.number().int().positive(),
   rating: z.number().int().min(1).max(5),
@@ -86,7 +89,7 @@ export const updateCouponSchema = z.object({
   expiresAt: z.string().datetime().nullable().optional(),
 }).refine((d) => Object.keys(d).length > 0, { message: "No fields to update" });
 
-// Categories
+// Categories — parentId nullable to allow clearing
 export const createCategorySchema = z.object({
   name: z.string().min(1).max(100),
   description: z.string().optional(),
@@ -94,10 +97,12 @@ export const createCategorySchema = z.object({
   parentId: z.number().int().positive().optional(),
 });
 
-export const updateCategorySchema = createCategorySchema.partial().refine(
-  (d) => Object.keys(d).length > 0,
-  { message: "No fields to update" },
-);
+export const updateCategorySchema = z.object({
+  name: z.string().min(1).max(100).optional(),
+  description: z.string().optional(),
+  icon: z.string().max(255).optional(),
+  parentId: z.number().int().positive().nullable().optional(),
+}).refine((d) => Object.keys(d).length > 0, { message: "No fields to update" });
 
 // Notifications
 export const createNotificationSchema = z.object({
@@ -107,3 +112,17 @@ export const createNotificationSchema = z.object({
   message: z.string().min(1),
   metadata: z.string().optional(),
 });
+
+// Shared pagination helper
+export function parsePagination(page: string | undefined, limit: string | undefined, maxLimit = 100) {
+  const p = Number(page ?? 1);
+  const l = Number(limit ?? 20);
+  if (!Number.isInteger(p) || p < 1 || !Number.isInteger(l) || l < 1) return null;
+  return { page: p, limit: Math.min(l, maxLimit), offset: (p - 1) * Math.min(l, maxLimit) };
+}
+
+export function parseLimit(raw: string | undefined, defaultValue: number, max: number): number | null {
+  const limit = raw === undefined ? defaultValue : Number(raw);
+  if (!Number.isInteger(limit) || limit < 1) return null;
+  return Math.min(limit, max);
+}
