@@ -4,12 +4,15 @@ import { eq, and, count } from "drizzle-orm";
 import { db } from "../db";
 import { wishlists, products, users } from "../db/schema";
 import { wishlistSchema } from "../validators";
+import { authMiddleware, requireOwnerOrRole, getCurrentUser } from "../middleware/auth";
 import { ok, created, notFound, badRequest } from "../lib/response";
 
 const app = new Hono();
 
-// GET /wishlists/users/:userId
-app.get("/users/:userId", async (c) => {
+const extractUserId = (c: any) => Number(c.req.param("userId"));
+
+// GET /wishlists/users/:userId — auth required, owner or admin
+app.get("/users/:userId", authMiddleware(), requireOwnerOrRole(extractUserId, "admin"), async (c) => {
   const userId = Number(c.req.param("userId"));
   if (isNaN(userId)) return badRequest(c, "Invalid user ID");
 
@@ -36,19 +39,14 @@ app.get("/users/:userId", async (c) => {
   return ok(c, data);
 });
 
-// POST /wishlists/users/:userId
-app.post("/users/:userId", zValidator("json", wishlistSchema), async (c) => {
+// POST /wishlists/users/:userId — auth required, owner or admin
+app.post("/users/:userId", authMiddleware(), requireOwnerOrRole(extractUserId, "admin"), zValidator("json", wishlistSchema), async (c) => {
   const userId = Number(c.req.param("userId"));
   if (isNaN(userId)) return badRequest(c, "Invalid user ID");
 
   const body = c.req.valid("json");
 
-  const [[user], [product]] = await Promise.all([
-    db.select({ id: users.id }).from(users).where(eq(users.id, userId)),
-    db.select({ id: products.id }).from(products).where(eq(products.id, body.productId)),
-  ]);
-
-  if (!user) return notFound(c, "User not found");
+  const [product] = await db.select({ id: products.id }).from(products).where(eq(products.id, body.productId));
   if (!product) return notFound(c, "Product not found");
 
   // Check if already in wishlist
@@ -66,8 +64,8 @@ app.post("/users/:userId", zValidator("json", wishlistSchema), async (c) => {
   return created(c, item);
 });
 
-// DELETE /wishlists/users/:userId/products/:productId
-app.delete("/users/:userId/products/:productId", async (c) => {
+// DELETE /wishlists/users/:userId/products/:productId — auth required, owner or admin
+app.delete("/users/:userId/products/:productId", authMiddleware(), requireOwnerOrRole(extractUserId, "admin"), async (c) => {
   const userId = Number(c.req.param("userId"));
   const productId = Number(c.req.param("productId"));
   if (isNaN(userId) || isNaN(productId)) return badRequest(c, "Invalid ID");
@@ -81,7 +79,7 @@ app.delete("/users/:userId/products/:productId", async (c) => {
   return ok(c, { message: "Removed from wishlist" });
 });
 
-// GET /wishlists/products/:productId/count
+// GET /wishlists/products/:productId/count — public
 app.get("/products/:productId/count", async (c) => {
   const productId = Number(c.req.param("productId"));
   if (isNaN(productId)) return badRequest(c, "Invalid product ID");

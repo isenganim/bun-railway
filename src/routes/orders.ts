@@ -1,16 +1,16 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
-import { eq, count, desc } from "drizzle-orm";
+import { eq, count, desc, sql } from "drizzle-orm";
 import { db } from "../db";
 import { orders, orderItems, orderStatusHistory, products, users, coupons, notifications } from "../db/schema";
 import { createOrderSchema, updateOrderStatusSchema } from "../validators";
-import { authMiddleware, requireRole } from "../middleware/auth";
+import { authMiddleware, requireRole, getCurrentUser } from "../middleware/auth";
 import { ok, created, notFound, badRequest, paginate } from "../lib/response";
 
 const app = new Hono();
 
-// GET /orders
-app.get("/", async (c) => {
+// GET /orders (admin/moderator only)
+app.get("/", authMiddleware(), requireRole("admin", "moderator"), async (c) => {
   const page = Number(c.req.query("page") ?? 1);
   const limit = Math.min(Number(c.req.query("limit") ?? 20), 100);
   const offset = (page - 1) * limit;
@@ -38,13 +38,18 @@ app.get("/", async (c) => {
   return paginate(c, data, Number(total), page, limit);
 });
 
-// GET /orders/:id
-app.get("/:id", async (c) => {
+// GET /orders/:id — auth required, owner or admin
+app.get("/:id", authMiddleware(), async (c) => {
   const id = Number(c.req.param("id"));
   if (isNaN(id)) return badRequest(c, "Invalid ID");
 
   const [order] = await db.select().from(orders).where(eq(orders.id, id));
   if (!order) return notFound(c, "Order not found");
+
+  const user = getCurrentUser(c);
+  if (!user || (order.userId !== user.sub && user.role !== "admin")) {
+    return c.json({ success: false, error: "Forbidden" }, 403);
+  }
 
   const items = await db.select({
     id: orderItems.id,
@@ -59,13 +64,14 @@ app.get("/:id", async (c) => {
   return ok(c, { ...order, items });
 });
 
-// GET /orders/:id/tracking
-app.get("/:id/tracking", async (c) => {
+// GET /orders/:id/tracking — auth required, owner or admin
+app.get("/:id/tracking", authMiddleware(), async (c) => {
   const id = Number(c.req.param("id"));
   if (isNaN(id)) return badRequest(c, "Invalid ID");
 
   const [order] = await db.select({
     id: orders.id,
+    userId: orders.userId,
     status: orders.status,
     trackingNumber: orders.trackingNumber,
     carrier: orders.carrier,
@@ -73,6 +79,11 @@ app.get("/:id/tracking", async (c) => {
   }).from(orders).where(eq(orders.id, id));
 
   if (!order) return notFound(c, "Order not found");
+
+  const user = getCurrentUser(c);
+  if (!user || (order.userId !== user.sub && user.role !== "admin")) {
+    return c.json({ success: false, error: "Forbidden" }, 403);
+  }
 
   const history = await db.select()
     .from(orderStatusHistory)
@@ -82,15 +93,21 @@ app.get("/:id/tracking", async (c) => {
   return ok(c, { ...order, history });
 });
 
-// POST /orders (with coupon support)
-app.post("/", zValidator("json", createOrderSchema), async (c) => {
+// POST /orders — auth required, userId from JWT, wrapped in transaction
+app.post("/", authMiddleware(), zValidator("json", createOrderSchema), async (c) => {
   const body = c.req.valid("json");
+  const currentUser = getCurrentUser(c);
+  if (!currentUser) return c.json({ success: false, error: "Unauthorized" }, 401);
 
-  const [user] = await db.select({ id: users.id }).from(users).where(eq(users.id, body.userId));
-  if (!user) return notFound(c, "User not found");
+  const userId = currentUser.sub;
 
+  const [userExists] = await db.select({ id: users.id }).from(users).where(eq(users.id, userId));
+  if (!userExists) return notFound(c, "User not found");
+
+  // Validate all products and stock before any mutations
   let totalAmount = 0;
   const itemsToInsert: { productId: number; quantity: number; unitPrice: string }[] = [];
+  const stockUpdates: { productId: number; newStock: number }[] = [];
 
   for (const item of body.items) {
     const [product] = await db.select().from(products).where(eq(products.id, item.productId));
@@ -100,15 +117,13 @@ app.post("/", zValidator("json", createOrderSchema), async (c) => {
     const price = Number(product.price);
     totalAmount += price * item.quantity;
     itemsToInsert.push({ productId: product.id, quantity: item.quantity, unitPrice: String(price) });
-
-    await db.update(products)
-      .set({ stock: product.stock - item.quantity })
-      .where(eq(products.id, product.id));
+    stockUpdates.push({ productId: product.id, newStock: product.stock - item.quantity });
   }
 
-  // Apply coupon if provided
+  // Validate coupon before any mutations
   let discountAmount = 0;
   let couponId: number | undefined;
+  let couponToUpdate: { id: number; currentUsage: number } | undefined;
 
   if (body.couponCode) {
     const [coupon] = await db.select().from(coupons).where(eq(coupons.code, body.couponCode.toUpperCase()));
@@ -126,37 +141,52 @@ app.post("/", zValidator("json", createOrderSchema), async (c) => {
     }
 
     couponId = coupon.id;
-
-    await db.update(coupons)
-      .set({ currentUsage: coupon.currentUsage + 1 })
-      .where(eq(coupons.id, coupon.id));
+    couponToUpdate = { id: coupon.id, currentUsage: coupon.currentUsage };
   }
 
   const finalAmount = totalAmount - discountAmount;
 
-  const [order] = await db.insert(orders).values({
-    userId: body.userId,
-    totalAmount: String(finalAmount),
-    discountAmount: String(discountAmount),
-    couponId,
-    shippingAddress: body.shippingAddress,
-    notes: body.notes,
-  }).returning();
+  // All validation passed — execute mutations in transaction
+  const order = await db.transaction(async (tx) => {
+    // Decrement stock
+    for (const su of stockUpdates) {
+      await tx.update(products)
+        .set({ stock: su.newStock })
+        .where(eq(products.id, su.productId));
+    }
 
-  await db.insert(orderItems).values(itemsToInsert.map((i) => ({ ...i, orderId: order.id })));
+    // Atomic coupon usage increment
+    if (couponToUpdate) {
+      await tx.update(coupons)
+        .set({ currentUsage: sql`${coupons.currentUsage} + 1` })
+        .where(eq(coupons.id, couponToUpdate.id));
+    }
 
-  // Record initial status
-  await db.insert(orderStatusHistory).values({
-    orderId: order.id,
-    toStatus: "pending",
-    note: "Order created",
+    const [newOrder] = await tx.insert(orders).values({
+      userId,
+      totalAmount: String(finalAmount),
+      discountAmount: String(discountAmount),
+      couponId,
+      shippingAddress: body.shippingAddress,
+      notes: body.notes,
+    }).returning();
+
+    await tx.insert(orderItems).values(itemsToInsert.map((i) => ({ ...i, orderId: newOrder.id })));
+
+    await tx.insert(orderStatusHistory).values({
+      orderId: newOrder.id,
+      toStatus: "pending",
+      note: "Order created",
+    });
+
+    return newOrder;
   });
 
   return created(c, order);
 });
 
-// PATCH /orders/:id/status (with tracking + history + notification)
-app.patch("/:id/status", zValidator("json", updateOrderStatusSchema), async (c) => {
+// PATCH /orders/:id/status — admin/moderator only, wrapped in transaction
+app.patch("/:id/status", authMiddleware(), requireRole("admin", "moderator"), zValidator("json", updateOrderStatusSchema), async (c) => {
   const id = Number(c.req.param("id"));
   if (isNaN(id)) return badRequest(c, "Invalid ID");
 
@@ -173,26 +203,29 @@ app.patch("/:id/status", zValidator("json", updateOrderStatusSchema), async (c) 
   if (body.carrier) updateData.carrier = body.carrier;
   if (body.estimatedDelivery) updateData.estimatedDelivery = new Date(body.estimatedDelivery);
 
-  const [order] = await db.update(orders)
-    .set(updateData)
-    .where(eq(orders.id, id))
-    .returning();
+  // Wrap update + history + notification in a transaction
+  const order = await db.transaction(async (tx) => {
+    const [updated] = await tx.update(orders)
+      .set(updateData)
+      .where(eq(orders.id, id))
+      .returning();
 
-  // Record status change
-  await db.insert(orderStatusHistory).values({
-    orderId: id,
-    fromStatus: existing.status,
-    toStatus: body.status,
-    note: body.note,
-  });
+    await tx.insert(orderStatusHistory).values({
+      orderId: id,
+      fromStatus: existing.status,
+      toStatus: body.status,
+      note: body.note,
+    });
 
-  // Create notification for user
-  await db.insert(notifications).values({
-    userId: existing.userId,
-    type: "order_status",
-    title: `Order #${id} status updated`,
-    message: `Your order status changed from ${existing.status} to ${body.status}`,
-    metadata: JSON.stringify({ orderId: id, fromStatus: existing.status, toStatus: body.status }),
+    await tx.insert(notifications).values({
+      userId: existing.userId,
+      type: "order_status",
+      title: `Order #${id} status updated`,
+      message: `Your order status changed from ${existing.status} to ${body.status}`,
+      metadata: JSON.stringify({ orderId: id, fromStatus: existing.status, toStatus: body.status }),
+    });
+
+    return updated;
   });
 
   return ok(c, order);

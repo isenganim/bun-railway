@@ -9,22 +9,32 @@ import { ok, created, notFound, badRequest, paginate } from "../lib/response";
 
 const app = new Hono();
 
-// GET /products
+// GET /products — with validated price range
 app.get("/", async (c) => {
   const page = Number(c.req.query("page") ?? 1);
   const limit = Math.min(Number(c.req.query("limit") ?? 20), 100);
   const search = c.req.query("search");
   const category = c.req.query("category");
-  const minPrice = c.req.query("minPrice");
-  const maxPrice = c.req.query("maxPrice");
-  const sort = c.req.query("sort"); // price_asc, price_desc, newest, rating
+  const minPriceRaw = c.req.query("minPrice");
+  const maxPriceRaw = c.req.query("maxPrice");
+  const sort = c.req.query("sort");
   const offset = (page - 1) * limit;
 
   const conditions = [];
   if (search) conditions.push(ilike(products.name, `%${search}%`));
   if (category) conditions.push(eq(products.category, category as any));
-  if (minPrice) conditions.push(gte(products.price, minPrice));
-  if (maxPrice) conditions.push(lte(products.price, maxPrice));
+
+  // Validate price params as numbers
+  if (minPriceRaw) {
+    const minPrice = Number(minPriceRaw);
+    if (isNaN(minPrice) || minPrice < 0) return badRequest(c, "minPrice must be a non-negative number");
+    conditions.push(gte(products.price, String(minPrice)));
+  }
+  if (maxPriceRaw) {
+    const maxPrice = Number(maxPriceRaw);
+    if (isNaN(maxPrice) || maxPrice < 0) return badRequest(c, "maxPrice must be a non-negative number");
+    conditions.push(lte(products.price, String(maxPrice)));
+  }
 
   const where = conditions.length ? and(...conditions) : undefined;
 

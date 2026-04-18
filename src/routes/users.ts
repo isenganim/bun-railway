@@ -4,12 +4,14 @@ import { eq, ilike, count, desc } from "drizzle-orm";
 import { db } from "../db";
 import { users, orders, reviews } from "../db/schema";
 import { updateUserSchema } from "../validators";
-import { authMiddleware, requireRole } from "../middleware/auth";
+import { authMiddleware, requireRole, requireOwnerOrRole, getCurrentUser } from "../middleware/auth";
 import { ok, created, notFound, badRequest, paginate } from "../lib/response";
 
 const app = new Hono();
 
-// GET /users
+const extractUserId = (c: any) => Number(c.req.param("id"));
+
+// GET /users — public, no email exposed
 app.get("/", async (c) => {
   const page = Number(c.req.query("page") ?? 1);
   const limit = Math.min(Number(c.req.query("limit") ?? 20), 100);
@@ -22,7 +24,6 @@ app.get("/", async (c) => {
     db.select({
       id: users.id,
       name: users.name,
-      email: users.email,
       username: users.username,
       role: users.role,
       status: users.status,
@@ -36,7 +37,7 @@ app.get("/", async (c) => {
   return paginate(c, data, Number(total), page, limit);
 });
 
-// GET /users/:id
+// GET /users/:id — public, no email exposed
 app.get("/:id", async (c) => {
   const id = Number(c.req.param("id"));
   if (isNaN(id)) return badRequest(c, "Invalid ID");
@@ -44,7 +45,6 @@ app.get("/:id", async (c) => {
   const [user] = await db.select({
     id: users.id,
     name: users.name,
-    email: users.email,
     username: users.username,
     role: users.role,
     status: users.status,
@@ -57,8 +57,8 @@ app.get("/:id", async (c) => {
   return ok(c, user);
 });
 
-// GET /users/:id/orders
-app.get("/:id/orders", async (c) => {
+// GET /users/:id/orders — auth required, owner or admin
+app.get("/:id/orders", authMiddleware(), requireOwnerOrRole(extractUserId, "admin"), async (c) => {
   const id = Number(c.req.param("id"));
   if (isNaN(id)) return badRequest(c, "Invalid ID");
 
@@ -77,7 +77,7 @@ app.get("/:id/orders", async (c) => {
   return paginate(c, data, Number(total), page, limit);
 });
 
-// GET /users/:id/reviews
+// GET /users/:id/reviews — public
 app.get("/:id/reviews", async (c) => {
   const id = Number(c.req.param("id"));
   if (isNaN(id)) return badRequest(c, "Invalid ID");
@@ -106,8 +106,8 @@ app.post("/", async (c) => {
   return created(c, user);
 });
 
-// PATCH /users/:id (validated)
-app.patch("/:id", zValidator("json", updateUserSchema), async (c) => {
+// PATCH /users/:id — auth required, owner or admin
+app.patch("/:id", authMiddleware(), requireOwnerOrRole(extractUserId, "admin"), zValidator("json", updateUserSchema), async (c) => {
   const id = Number(c.req.param("id"));
   if (isNaN(id)) return badRequest(c, "Invalid ID");
 

@@ -4,13 +4,15 @@ import { eq, and, count, desc } from "drizzle-orm";
 import { db } from "../db";
 import { notifications, users } from "../db/schema";
 import { createNotificationSchema } from "../validators";
-import { authMiddleware, requireRole } from "../middleware/auth";
+import { authMiddleware, requireRole, requireOwnerOrRole, getCurrentUser } from "../middleware/auth";
 import { ok, created, notFound, badRequest, paginate } from "../lib/response";
 
 const app = new Hono();
 
-// GET /notifications/users/:userId
-app.get("/users/:userId", async (c) => {
+const extractUserId = (c: any) => Number(c.req.param("userId"));
+
+// GET /notifications/users/:userId — auth required, owner or admin
+app.get("/users/:userId", authMiddleware(), requireOwnerOrRole(extractUserId, "admin"), async (c) => {
   const userId = Number(c.req.param("userId"));
   if (isNaN(userId)) return badRequest(c, "Invalid user ID");
 
@@ -29,16 +31,11 @@ app.get("/users/:userId", async (c) => {
     db.select({ value: count() }).from(notifications).where(where),
   ]);
 
-  // Get unread count
-  const [{ value: unreadCount }] = await db.select({ value: count() })
-    .from(notifications)
-    .where(and(eq(notifications.userId, userId), eq(notifications.isRead, false)));
-
   return paginate(c, data, Number(total), page, limit);
 });
 
-// GET /notifications/users/:userId/unread-count
-app.get("/users/:userId/unread-count", async (c) => {
+// GET /notifications/users/:userId/unread-count — auth required, owner or admin
+app.get("/users/:userId/unread-count", authMiddleware(), requireOwnerOrRole(extractUserId, "admin"), async (c) => {
   const userId = Number(c.req.param("userId"));
   if (isNaN(userId)) return badRequest(c, "Invalid user ID");
 
@@ -49,22 +46,30 @@ app.get("/users/:userId/unread-count", async (c) => {
   return ok(c, { userId, unreadCount: Number(unreadCount) });
 });
 
-// PATCH /notifications/:id/read
-app.patch("/:id/read", async (c) => {
+// PATCH /notifications/:id/read — auth required, owner of notification or admin
+app.patch("/:id/read", authMiddleware(), async (c) => {
   const id = Number(c.req.param("id"));
   if (isNaN(id)) return badRequest(c, "Invalid ID");
+
+  // Fetch notification to check ownership
+  const [existing] = await db.select().from(notifications).where(eq(notifications.id, id));
+  if (!existing) return notFound(c, "Notification not found");
+
+  const user = getCurrentUser(c);
+  if (!user || (existing.userId !== user.sub && user.role !== "admin")) {
+    return c.json({ success: false, error: "Forbidden" }, 403);
+  }
 
   const [notification] = await db.update(notifications)
     .set({ isRead: true })
     .where(eq(notifications.id, id))
     .returning();
 
-  if (!notification) return notFound(c, "Notification not found");
   return ok(c, notification);
 });
 
-// PATCH /notifications/users/:userId/read-all
-app.patch("/users/:userId/read-all", async (c) => {
+// PATCH /notifications/users/:userId/read-all — auth required, owner or admin
+app.patch("/users/:userId/read-all", authMiddleware(), requireOwnerOrRole(extractUserId, "admin"), async (c) => {
   const userId = Number(c.req.param("userId"));
   if (isNaN(userId)) return badRequest(c, "Invalid user ID");
 
@@ -93,13 +98,20 @@ app.post("/", authMiddleware(), requireRole("admin"), zValidator("json", createN
   return created(c, notification);
 });
 
-// DELETE /notifications/:id
-app.delete("/:id", async (c) => {
+// DELETE /notifications/:id — auth required, owner or admin
+app.delete("/:id", authMiddleware(), async (c) => {
   const id = Number(c.req.param("id"));
   if (isNaN(id)) return badRequest(c, "Invalid ID");
 
-  const [notification] = await db.delete(notifications).where(eq(notifications.id, id)).returning();
-  if (!notification) return notFound(c, "Notification not found");
+  const [existing] = await db.select().from(notifications).where(eq(notifications.id, id));
+  if (!existing) return notFound(c, "Notification not found");
+
+  const user = getCurrentUser(c);
+  if (!user || (existing.userId !== user.sub && user.role !== "admin")) {
+    return c.json({ success: false, error: "Forbidden" }, 403);
+  }
+
+  await db.delete(notifications).where(eq(notifications.id, id));
 
   return ok(c, { message: "Notification deleted" });
 });

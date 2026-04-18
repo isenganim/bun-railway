@@ -5,7 +5,12 @@ import { eq } from "drizzle-orm";
 import { db } from "../db";
 import { users } from "../db/schema";
 
-const JWT_SECRET = process.env.JWT_SECRET || "super-secret-change-me";
+const _jwtSecret = process.env.JWT_SECRET;
+if (!_jwtSecret || _jwtSecret.length < 32) {
+  throw new Error("JWT_SECRET must be set to a strong secret (>=32 chars)");
+}
+const JWT_SECRET: string = _jwtSecret;
+
 const TOKEN_EXPIRY = 60 * 60 * 24; // 24 hours
 
 export interface JwtPayload {
@@ -42,6 +47,20 @@ export function requireRole(...roles: string[]) {
     }
     if (!roles.includes(payload.role)) {
       return c.json({ success: false, error: "Insufficient permissions" }, 403);
+    }
+    await next();
+  };
+}
+
+export function requireOwnerOrRole(userIdExtractor: (c: Context) => number, ...roles: string[]) {
+  return async (c: Context, next: Next) => {
+    const payload = c.get("jwtPayload") as JwtPayload | undefined;
+    if (!payload) {
+      return c.json({ success: false, error: "Authentication required" }, 401);
+    }
+    const targetUserId = userIdExtractor(c);
+    if (payload.sub !== targetUserId && !roles.includes(payload.role)) {
+      return c.json({ success: false, error: "Forbidden" }, 403);
     }
     await next();
   };

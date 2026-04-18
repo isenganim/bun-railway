@@ -1,4 +1,4 @@
-import { pgTable, serial, text, varchar, integer, decimal, boolean, timestamp, pgEnum, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, varchar, integer, decimal, boolean, timestamp, pgEnum, uniqueIndex, type AnyPgColumn } from "drizzle-orm/pg-core";
 
 export const roleEnum = pgEnum("role", ["admin", "user", "moderator"]);
 export const statusEnum = pgEnum("status", ["active", "inactive", "banned"]);
@@ -91,7 +91,7 @@ export const categories = pgTable("categories", {
   slug: varchar("slug", { length: 100 }).notNull().unique(),
   description: text("description"),
   icon: varchar("icon", { length: 255 }),
-  parentId: integer("parent_id"),
+  parentId: integer("parent_id").references((): AnyPgColumn => categories.id, { onDelete: "restrict" }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

@@ -4,7 +4,7 @@ import { eq, avg, count } from "drizzle-orm";
 import { db } from "../db";
 import { reviews, users, products } from "../db/schema";
 import { createReviewSchema } from "../validators";
-import { authMiddleware, requireRole } from "../middleware/auth";
+import { authMiddleware, requireRole, getCurrentUser } from "../middleware/auth";
 import { ok, created, notFound, badRequest } from "../lib/response";
 
 const app = new Hono();
@@ -36,20 +36,19 @@ app.get("/product/:productId", async (c) => {
   });
 });
 
-// POST /reviews (validated)
-app.post("/", zValidator("json", createReviewSchema), async (c) => {
+// POST /reviews — auth required, userId from JWT
+app.post("/", authMiddleware(), zValidator("json", createReviewSchema), async (c) => {
   const body = c.req.valid("json");
+  const currentUser = getCurrentUser(c);
+  if (!currentUser) return c.json({ success: false, error: "Unauthorized" }, 401);
 
-  const [[user], [product]] = await Promise.all([
-    db.select({ id: users.id }).from(users).where(eq(users.id, body.userId)),
-    db.select({ id: products.id }).from(products).where(eq(products.id, body.productId)),
-  ]);
+  const userId = currentUser.sub;
 
-  if (!user) return notFound(c, "User not found");
+  const [product] = await db.select({ id: products.id }).from(products).where(eq(products.id, body.productId));
   if (!product) return notFound(c, "Product not found");
 
   const [review] = await db.insert(reviews).values({
-    userId: body.userId,
+    userId,
     productId: body.productId,
     rating: body.rating,
     comment: body.comment,

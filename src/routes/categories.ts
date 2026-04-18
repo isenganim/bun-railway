@@ -1,9 +1,9 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
-import { eq, count, isNull } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "../db";
-import { categories, products } from "../db/schema";
-import { createCategorySchema } from "../validators";
+import { categories } from "../db/schema";
+import { createCategorySchema, updateCategorySchema } from "../validators";
 import { authMiddleware, requireRole } from "../middleware/auth";
 import { ok, created, notFound, badRequest } from "../lib/response";
 
@@ -33,7 +33,7 @@ app.get("/", async (c) => {
   return ok(c, roots);
 });
 
-// GET /categories/flat (flat list with product counts)
+// GET /categories/flat
 app.get("/flat", async (c) => {
   const data = await db.select({
     id: categories.id,
@@ -55,7 +55,6 @@ app.get("/:id", async (c) => {
   const [category] = await db.select().from(categories).where(eq(categories.id, id));
   if (!category) return notFound(c, "Category not found");
 
-  // Get children
   const children = await db.select().from(categories).where(eq(categories.parentId, id));
 
   return ok(c, { ...category, children });
@@ -85,13 +84,12 @@ app.post("/", authMiddleware(), requireRole("admin"), zValidator("json", createC
   return created(c, category);
 });
 
-// PATCH /categories/:id (admin only)
-app.patch("/:id", authMiddleware(), requireRole("admin"), async (c) => {
+// PATCH /categories/:id (admin only) — validated with Zod
+app.patch("/:id", authMiddleware(), requireRole("admin"), zValidator("json", updateCategorySchema), async (c) => {
   const id = Number(c.req.param("id"));
   if (isNaN(id)) return badRequest(c, "Invalid ID");
 
-  const body = await c.req.json().catch(() => null);
-  if (!body) return badRequest(c, "Request body required");
+  const body = c.req.valid("json");
 
   const updateData: Record<string, unknown> = {};
   if (body.name) {
@@ -100,7 +98,22 @@ app.patch("/:id", authMiddleware(), requireRole("admin"), async (c) => {
   }
   if (body.description !== undefined) updateData.description = body.description;
   if (body.icon !== undefined) updateData.icon = body.icon;
-  if (body.parentId !== undefined) updateData.parentId = body.parentId;
+
+  // Validate parentId
+  if (body.parentId !== undefined) {
+    if (body.parentId === id) return badRequest(c, "Category cannot be its own parent");
+    if (body.parentId) {
+      const [parent] = await db.select({ id: categories.id }).from(categories).where(eq(categories.id, body.parentId));
+      if (!parent) return notFound(c, "Parent category not found");
+    }
+    updateData.parentId = body.parentId;
+  }
+
+  // Check slug uniqueness if name changed
+  if (updateData.slug) {
+    const [existing] = await db.select({ id: categories.id }).from(categories).where(eq(categories.slug, updateData.slug as string));
+    if (existing && existing.id !== id) return badRequest(c, "Category with this name already exists");
+  }
 
   const [category] = await db.update(categories)
     .set(updateData)
@@ -116,7 +129,6 @@ app.delete("/:id", authMiddleware(), requireRole("admin"), async (c) => {
   const id = Number(c.req.param("id"));
   if (isNaN(id)) return badRequest(c, "Invalid ID");
 
-  // Check for children
   const children = await db.select({ id: categories.id }).from(categories).where(eq(categories.parentId, id));
   if (children.length > 0) return badRequest(c, "Cannot delete category with subcategories");
 

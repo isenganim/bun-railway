@@ -3,7 +3,7 @@ import { zValidator } from "@hono/zod-validator";
 import { eq, desc, count } from "drizzle-orm";
 import { db } from "../db";
 import { coupons } from "../db/schema";
-import { createCouponSchema } from "../validators";
+import { createCouponSchema, updateCouponSchema } from "../validators";
 import { authMiddleware, requireRole } from "../middleware/auth";
 import { ok, created, notFound, badRequest, paginate } from "../lib/response";
 
@@ -68,13 +68,12 @@ app.post("/", authMiddleware(), requireRole("admin"), zValidator("json", createC
   return created(c, coupon);
 });
 
-// PATCH /coupons/:id (admin only)
-app.patch("/:id", authMiddleware(), requireRole("admin"), async (c) => {
+// PATCH /coupons/:id (admin only) — validated with Zod
+app.patch("/:id", authMiddleware(), requireRole("admin"), zValidator("json", updateCouponSchema), async (c) => {
   const id = Number(c.req.param("id"));
   if (isNaN(id)) return badRequest(c, "Invalid ID");
 
-  const body = await c.req.json().catch(() => null);
-  if (!body) return badRequest(c, "Request body required");
+  const body = c.req.valid("json");
 
   const updateData: Record<string, unknown> = {};
   if (body.isActive !== undefined) updateData.isActive = body.isActive;

@@ -39,9 +39,8 @@ export const updateProductSchema = z.object({
   isActive: z.boolean().optional(),
 });
 
-// Orders
+// Orders — userId removed, derived from JWT
 export const createOrderSchema = z.object({
-  userId: z.number().int().positive(),
   shippingAddress: z.string().min(5),
   notes: z.string().optional(),
   couponCode: z.string().optional(),
@@ -59,9 +58,8 @@ export const updateOrderStatusSchema = z.object({
   note: z.string().optional(),
 });
 
-// Reviews
+// Reviews — userId removed, derived from JWT
 export const createReviewSchema = z.object({
-  userId: z.number().int().positive(),
   productId: z.number().int().positive(),
   rating: z.number().int().min(1).max(5),
   comment: z.string().max(2000).optional(),
@@ -82,6 +80,12 @@ export const createCouponSchema = z.object({
   expiresAt: z.string().datetime().optional(),
 });
 
+export const updateCouponSchema = z.object({
+  isActive: z.boolean().optional(),
+  maxUsage: z.number().int().positive().nullable().optional(),
+  expiresAt: z.string().datetime().nullable().optional(),
+}).refine((d) => Object.keys(d).length > 0, { message: "No fields to update" });
+
 // Categories
 export const createCategorySchema = z.object({
   name: z.string().min(1).max(100),
@@ -89,6 +93,11 @@ export const createCategorySchema = z.object({
   icon: z.string().max(255).optional(),
   parentId: z.number().int().positive().optional(),
 });
+
+export const updateCategorySchema = createCategorySchema.partial().refine(
+  (d) => Object.keys(d).length > 0,
+  { message: "No fields to update" },
+);
 
 // Notifications
 export const createNotificationSchema = z.object({

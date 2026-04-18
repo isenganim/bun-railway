@@ -9,31 +9,36 @@ import { ok, created, badRequest } from "../lib/response";
 
 const app = new Hono();
 
-// POST /auth/register
+// POST /auth/register — catch DB unique constraint instead of TOCTOU
 app.post("/register", zValidator("json", registerSchema), async (c) => {
   const body = c.req.valid("json");
 
-  const [existingEmail] = await db.select({ id: users.id }).from(users).where(eq(users.email, body.email));
-  if (existingEmail) return badRequest(c, "Email already registered");
-
-  const [existingUsername] = await db.select({ id: users.id }).from(users).where(eq(users.username, body.username));
-  if (existingUsername) return badRequest(c, "Username already taken");
-
   const passwordHash = await hashPassword(body.password);
 
-  const [user] = await db.insert(users).values({
-    name: body.name,
-    email: body.email,
-    username: body.username,
-    passwordHash,
-    bio: body.bio,
-  }).returning({
-    id: users.id,
-    name: users.name,
-    email: users.email,
-    username: users.username,
-    role: users.role,
-  });
+  let user;
+  try {
+    [user] = await db.insert(users).values({
+      name: body.name,
+      email: body.email,
+      username: body.username,
+      passwordHash,
+      bio: body.bio,
+    }).returning({
+      id: users.id,
+      name: users.name,
+      email: users.email,
+      username: users.username,
+      role: users.role,
+    });
+  } catch (err: any) {
+    // Postgres unique_violation
+    if (err?.code === "23505") {
+      const detail = String(err?.detail || err?.message || "");
+      const field = detail.includes("email") ? "Email" : "Username";
+      return badRequest(c, `${field} already in use`);
+    }
+    throw err;
+  }
 
   const token = await generateToken({ id: user.id, role: user.role, username: user.username });
 
