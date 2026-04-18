@@ -118,6 +118,7 @@ app.patch(
     security: [{ bearerAuth: [] }],
     responses: {
       200: { description: "Notification marked as read", content: { "application/json": { schema: resolver(NotificationResponseSchema) } } },
+      400: { description: "Invalid ID", content: { "application/json": { schema: resolver(ErrorSchema) } } },
       401: { description: "Unauthorized", content: { "application/json": { schema: resolver(ErrorSchema) } } },
       403: { description: "Forbidden", content: { "application/json": { schema: resolver(ErrorSchema) } } },
       404: { description: "Notification not found", content: { "application/json": { schema: resolver(ErrorSchema) } } },
@@ -211,6 +212,7 @@ app.delete(
     security: [{ bearerAuth: [] }],
     responses: {
       200: { description: "Notification deleted", content: { "application/json": { schema: resolver(MessageSchema) } } },
+      400: { description: "Invalid ID", content: { "application/json": { schema: resolver(ErrorSchema) } } },
       401: { description: "Unauthorized", content: { "application/json": { schema: resolver(ErrorSchema) } } },
       403: { description: "Forbidden", content: { "application/json": { schema: resolver(ErrorSchema) } } },
       404: { description: "Notification not found", content: { "application/json": { schema: resolver(ErrorSchema) } } },

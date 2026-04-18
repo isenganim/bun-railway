@@ -137,6 +137,7 @@ app.delete(
     security: [{ bearerAuth: [] }],
     responses: {
       200: { description: "Review deleted", content: { "application/json": { schema: resolver(MessageSchema) } } },
+      400: { description: "Invalid ID", content: { "application/json": { schema: resolver(ErrorSchema) } } },
       401: { description: "Unauthorized", content: { "application/json": { schema: resolver(ErrorSchema) } } },
       403: { description: "Forbidden", content: { "application/json": { schema: resolver(ErrorSchema) } } },
       404: { description: "Review not found", content: { "application/json": { schema: resolver(ErrorSchema) } } },

@@ -87,7 +87,25 @@ app.get(
     description: "Returns order details with items. Requires auth — owner or staff only.",
     security: [{ bearerAuth: [] }],
     responses: {
-      200: { description: "Order with items", content: { "application/json": { schema: resolver(z.object({ success: z.literal(true), data: OrderSchema })) } } },
+      200: {
+        description: "Order with items",
+        content: {
+          "application/json": {
+            schema: resolver(z.object({
+              success: z.literal(true),
+              data: OrderSchema.extend({
+                items: z.array(z.object({
+                  id: z.number(),
+                  quantity: z.number(),
+                  unitPrice: z.string(),
+                  product: z.object({ id: z.number(), name: z.string(), imageUrl: z.string().nullable() }),
+                })),
+              }),
+            })),
+          },
+        },
+      },
+      400: { description: "Invalid ID", content: { "application/json": { schema: resolver(ErrorSchema) } } },
       401: { description: "Unauthorized", content: { "application/json": { schema: resolver(ErrorSchema) } } },
       403: { description: "Forbidden", content: { "application/json": { schema: resolver(ErrorSchema) } } },
       404: { description: "Order not found", content: { "application/json": { schema: resolver(ErrorSchema) } } },

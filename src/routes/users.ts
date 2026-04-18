@@ -61,15 +61,20 @@ app.get(
   describeRoute({
     tags: ["Users"],
     summary: "List users",
-    description: "Returns a paginated list of users. Email is not exposed.",
+    description: "Returns a paginated list of users. Admin or moderator only. Email is not exposed.",
+    security: [{ bearerAuth: [] }],
     responses: {
       200: {
         description: "Paginated user list",
         content: { "application/json": { schema: resolver(PaginatedUsersSchema) } },
       },
       400: { description: "Invalid pagination", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      401: { description: "Unauthorized", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      403: { description: "Forbidden", content: { "application/json": { schema: resolver(ErrorSchema) } } },
     },
   }),
+  authMiddleware(),
+  requireRole("admin", "moderator"),
   async (c) => {
     const pg = parsePagination(c.req.query("page"), c.req.query("limit"));
     if (!pg) return badRequest(c, "Invalid pagination parameters");
@@ -93,11 +98,15 @@ app.get(
   describeRoute({
     tags: ["Users"],
     summary: "Get user by ID",
+    description: "Returns a user profile (no email/password exposed). Requires auth.",
+    security: [{ bearerAuth: [] }],
     responses: {
       200: { description: "User found", content: { "application/json": { schema: resolver(UserResponseSchema) } } },
+      401: { description: "Unauthorized", content: { "application/json": { schema: resolver(ErrorSchema) } } },
       404: { description: "User not found", content: { "application/json": { schema: resolver(ErrorSchema) } } },
     },
   }),
+  authMiddleware(),
   async (c) => {
     const id = Number(c.req.param("id"));
     if (isNaN(id)) return badRequest(c, "Invalid ID");
@@ -153,12 +162,15 @@ app.get(
   describeRoute({
     tags: ["Users"],
     summary: "Get user reviews",
-    description: "Returns all reviews written by a user.",
+    description: "Returns all reviews written by a user. Requires auth.",
+    security: [{ bearerAuth: [] }],
     responses: {
       200: { description: "List of reviews" },
+      401: { description: "Unauthorized", content: { "application/json": { schema: resolver(ErrorSchema) } } },
       404: { description: "User not found", content: { "application/json": { schema: resolver(ErrorSchema) } } },
     },
   }),
+  authMiddleware(),
   async (c) => {
     const id = Number(c.req.param("id"));
     if (isNaN(id)) return badRequest(c, "Invalid ID");
@@ -179,12 +191,17 @@ app.post(
   describeRoute({
     tags: ["Users"],
     summary: "Create user (no password)",
-    description: "Creates a user without a password. For seeding/admin use. Use /auth/register for normal signup.",
+    description: "Creates a user without a password. For seeding/admin use only. Use /auth/register for normal signup. Admin only.",
+    security: [{ bearerAuth: [] }],
     responses: {
       201: { description: "User created", content: { "application/json": { schema: resolver(UserResponseSchema) } } },
       400: { description: "Missing required fields", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      401: { description: "Unauthorized", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      403: { description: "Forbidden", content: { "application/json": { schema: resolver(ErrorSchema) } } },
     },
   }),
+  authMiddleware(),
+  requireRole("admin"),
   async (c) => {
     const body = await c.req.json().catch(() => null);
     if (!body?.name || !body?.email || !body?.username)
@@ -195,7 +212,7 @@ app.post(
       email: body.email,
       username: body.username,
       bio: body.bio,
-    }).returning();
+    }).returning(safeUserFields);
 
     return created(c, user);
   },

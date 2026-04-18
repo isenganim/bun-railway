@@ -23,6 +23,11 @@ const CategorySchema = z.object({
   createdAt: z.string(),
 });
 
+// CategorySchema extended with children for tree/single endpoints
+const CategoryWithChildrenSchema: z.ZodType<any> = z.lazy(() =>
+  CategorySchema.extend({ children: z.array(CategoryWithChildrenSchema) }),
+);
+
 const ErrorSchema = z.object({ success: z.literal(false), error: z.string() });
 const MessageSchema = z.object({ success: z.literal(true), data: z.object({ message: z.string() }) });
 
@@ -39,7 +44,7 @@ app.get(
         description: "Category tree",
         content: {
           "application/json": {
-            schema: resolver(z.object({ success: z.literal(true), data: z.array(CategorySchema) })),
+            schema: resolver(z.object({ success: z.literal(true), data: z.array(CategoryWithChildrenSchema) })),
           },
         },
       },
@@ -110,7 +115,7 @@ app.get(
     summary: "Get category by ID",
     description: "Returns a category with its direct children.",
     responses: {
-      200: { description: "Category with children", content: { "application/json": { schema: resolver(z.object({ success: z.literal(true), data: CategorySchema })) } } },
+      200: { description: "Category with children", content: { "application/json": { schema: resolver(z.object({ success: z.literal(true), data: CategoryWithChildrenSchema })) } } },
       404: { description: "Category not found", content: { "application/json": { schema: resolver(ErrorSchema) } } },
     },
   }),

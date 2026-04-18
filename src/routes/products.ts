@@ -176,7 +176,27 @@ app.get(
     summary: "Get product by ID",
     description: "Returns a product with its latest 10 reviews.",
     responses: {
-      200: { description: "Product with reviews", content: { "application/json": { schema: resolver(ProductResponseSchema) } } },
+      200: {
+        description: "Product with reviews",
+        content: {
+          "application/json": {
+            schema: resolver(z.object({
+              success: z.literal(true),
+              data: ProductSchema.extend({
+                reviews: z.array(z.object({
+                  id: z.number(),
+                  userId: z.number(),
+                  productId: z.number(),
+                  rating: z.number(),
+                  comment: z.string().nullable(),
+                  createdAt: z.string(),
+                })),
+              }),
+            })),
+          },
+        },
+      },
+      400: { description: "Invalid ID", content: { "application/json": { schema: resolver(ErrorSchema) } } },
       404: { description: "Product not found", content: { "application/json": { schema: resolver(ErrorSchema) } } },
     },
   }),

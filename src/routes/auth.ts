@@ -171,6 +171,10 @@ app.get(
         description: "Unauthorized",
         content: { "application/json": { schema: resolver(ErrorSchema) } },
       },
+      404: {
+        description: "User not found",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
     },
   }),
   async (c) => {
