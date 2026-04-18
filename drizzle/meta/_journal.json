@@ -8,6 +8,27 @@
       "when": 1776432230242,
       "tag": "0000_oval_black_queen",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1776469810947,
+      "tag": "0001_boring_thor",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1776485122432,
+      "tag": "0002_fixed_valkyrie",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1776493164011,
+      "tag": "0003_sad_kitty_pryde",
+      "breakpoints": true
     }
   ]
 }
