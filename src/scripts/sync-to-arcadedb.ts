@@ -1,6 +1,5 @@
 import { db } from "../db";
 import { users, products, orders, orderItems, reviews } from "../db/schema";
-import { eq } from "drizzle-orm";
 import { arcadeCommand, arcadeQuery } from "../db/arcadedb";
 
 async function syncToArcadeDB() {
@@ -43,16 +42,25 @@ async function syncToArcadeDB() {
       );
     }
 
-    // Create indexes
+    // Create indexes — do not swallow errors; IF NOT EXISTS makes this safe to re-run
     console.log("  Creating indexes...");
-    await arcadeCommand("sql", "CREATE INDEX IF NOT EXISTS ON User (id) UNIQUE").catch(() => {});
-    await arcadeCommand("sql", "CREATE INDEX IF NOT EXISTS ON Product (id) UNIQUE").catch(() => {});
+    await arcadeCommand("sql", "CREATE INDEX IF NOT EXISTS ON User (id) UNIQUE");
+    await arcadeCommand("sql", "CREATE INDEX IF NOT EXISTS ON Product (id) UNIQUE");
+
+    // Preload all order items to avoid N+1 queries
+    const allOrderItems = await db.select().from(orderItems);
+    const itemsByOrder = new Map<number, typeof allOrderItems>();
+    for (const item of allOrderItems) {
+      const list = itemsByOrder.get(item.orderId) ?? [];
+      list.push(item);
+      itemsByOrder.set(item.orderId, list);
+    }
 
     // Sync orders as PURCHASED relationships
     const allOrders = await db.select().from(orders);
     console.log(`  Syncing ${allOrders.length} orders...`);
     for (const order of allOrders) {
-      const items = await db.select().from(orderItems).where(eq(orderItems.orderId, order.id));
+      const items = itemsByOrder.get(order.id) ?? [];
       for (const item of items) {
         await arcadeCommand("opencypher", `
           MATCH (u:User {id: $userId}), (p:Product {id: $productId})

@@ -172,7 +172,8 @@ app.get(
       if (result.length === 0) return ok(c, { totalUsers: 0, totalProducts: 0, totalPurchases: 0, totalReviews: 0 });
       const r: any = result[0];
       return ok(c, { totalUsers: n(r.totalUsers), totalProducts: n(r.totalProducts), totalPurchases: n(r.totalPurchases), totalReviews: n(r.totalReviews) });
-    } catch {
+    } catch (e) {
+      console.error("[graph-stats] ArcadeDB query failed:", e);
       return ok(c, { totalUsers: 0, totalProducts: 0, totalPurchases: 0, totalReviews: 0 });
     }
   },
