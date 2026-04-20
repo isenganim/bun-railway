@@ -13,6 +13,11 @@ const SimilarUserSchema = z.object({ id: z.number(), name: z.string(), username:
 const GraphStatsSchema = z.object({ totalUsers: z.number(), totalProducts: z.number(), totalPurchases: z.number(), totalReviews: z.number() });
 const ErrorSchema = z.object({ success: z.literal(false), error: z.string() });
 
+function parseLimit(raw: string | undefined, defaultVal: number, max: number): number {
+  const parsed = Number(raw);
+  return Math.min(Math.max(Number.isFinite(parsed) && parsed > 0 ? parsed : defaultVal, 1), max);
+}
+
 // GET /recommendations/products/:id
 app.get(
   "/products/:id",
@@ -28,7 +33,7 @@ app.get(
   async (c) => {
     const productId = Number(c.req.param("id"));
     if (isNaN(productId)) return badRequest(c, "Invalid product ID");
-    const limit = Math.min(Number(c.req.query("limit") ?? 5), 20);
+    const limit = parseLimit(c.req.query("limit"), 5, 20);
 
     const { result } = await arcadeQuery("opencypher", `
       MATCH (p:Product {id: $productId})<-[:PURCHASED]-(u:User)-[:PURCHASED]->(rec:Product)
@@ -58,7 +63,7 @@ app.get(
   async (c) => {
     const userId = Number(c.req.param("id"));
     if (isNaN(userId)) return badRequest(c, "Invalid user ID");
-    const limit = Math.min(Number(c.req.query("limit") ?? 5), 20);
+    const limit = parseLimit(c.req.query("limit"), 5, 20);
 
     const check = await arcadeQuery("opencypher", "MATCH (u:User {id: $userId}) RETURN u", { userId });
     if (check.result.length === 0) return notFound(c, "User not found");
@@ -94,7 +99,7 @@ app.get(
     },
   }),
   async (c) => {
-    const limit = Math.min(Number(c.req.query("limit") ?? 10), 50);
+    const limit = parseLimit(c.req.query("limit"), 10, 50);
 
     const { result } = await arcadeQuery("opencypher", `
       MATCH (p:Product)<-[pu:PURCHASED]-()
@@ -129,7 +134,7 @@ app.get(
   async (c) => {
     const userId = Number(c.req.param("id"));
     if (isNaN(userId)) return badRequest(c, "Invalid user ID");
-    const limit = Math.min(Number(c.req.query("limit") ?? 5), 20);
+    const limit = parseLimit(c.req.query("limit"), 5, 20);
 
     const { result } = await arcadeQuery("opencypher", `
       MATCH (u:User {id: $userId})-[:PURCHASED]->(p:Product)<-[:PURCHASED]-(similar:User)

@@ -39,7 +39,7 @@ async function syncToArcadeDB() {
     for (const product of allProducts) {
       await arcadeCommand("sql",
         "CREATE VERTEX Product SET id = :id, name = :name, slug = :slug, price = :price, category = :category, stock = :stock, isActive = :isActive",
-        { id: product.id, name: product.name, slug: product.slug, price: Number(product.price), category: product.category, stock: product.stock, isActive: product.isActive },
+        { id: product.id, name: product.name, slug: product.slug, price: String(product.price), category: product.category, stock: product.stock, isActive: product.isActive },
       );
     }
 
@@ -92,4 +92,9 @@ async function syncToArcadeDB() {
   }
 }
 
-syncToArcadeDB();
+syncToArcadeDB()
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });

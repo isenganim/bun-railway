@@ -19,7 +19,8 @@ export async function syncPurchased(opts: {
       ON CREATE SET u.name = $userName, u.username = $username
       MERGE (p:Product {id: $productId})
       ON CREATE SET p.name = $productName, p.category = $productCategory, p.price = $productPrice
-      CREATE (u)-[:PURCHASED {orderId: $orderId, quantity: $quantity, unitPrice: $unitPrice, date: $date}]->(p)
+      MERGE (u)-[r:PURCHASED {orderId: $orderId, productId: $productId}]->(p)
+      ON CREATE SET r.quantity = $quantity, r.unitPrice = $unitPrice, r.date = $date
     `, {
       userId: opts.userId,
       userName: opts.userName ?? null,
@@ -57,7 +58,8 @@ export async function syncReviewed(opts: {
       ON CREATE SET u.name = $userName, u.username = $username
       MERGE (p:Product {id: $productId})
       ON CREATE SET p.name = $productName, p.category = $productCategory, p.price = $productPrice
-      CREATE (u)-[:REVIEWED {reviewId: $reviewId, rating: $rating, comment: $comment, date: $date}]->(p)
+      MERGE (u)-[r:REVIEWED {reviewId: $reviewId}]->(p)
+      ON CREATE SET r.rating = $rating, r.comment = $comment, r.date = $date
     `, {
       userId: opts.userId,
       userName: opts.userName ?? null,

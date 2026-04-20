@@ -13,6 +13,7 @@ ArcadeDB is a multi-model database (graph, document, key-value) that supports Cy
 ## Local Development
 
 ```bash
+cd arcadedb
 cp .env.example .env
 # Edit .env with your password
 docker compose up -d
@@ -26,8 +27,8 @@ Studio UI: http://localhost:2480
 2. Point it to this `arcadedb/` directory (or the repo root with `Dockerfile` path set)
 3. Set these environment variables in Coolify:
 
-```
-JAVA_OPTS=-Darcadedb.server.rootPassword=<your-password> -Darcadedb.server.defaultDatabases=bun_railway
+```dotenv
+JAVA_OPTS="-Darcadedb.server.rootPassword=<your-password> -Darcadedb.server.defaultDatabases=bun_railway[root]"
 ```
 
 4. Expose port **2480** (HTTP API)
@@ -38,7 +39,7 @@ JAVA_OPTS=-Darcadedb.server.rootPassword=<your-password> -Darcadedb.server.defau
 
 Add to your app's `.env`:
 
-```
+```dotenv
 ARCADEDB_URL=http://<arcadedb-host>:2480
 ARCADEDB_DATABASE=bun_railway
 ARCADEDB_USER=root
@@ -56,8 +57,8 @@ curl -u root:<password> -X POST http://localhost:2480/api/v1/server \
   -H "Content-Type: application/json" \
   -d '{"command":"create database bun_railway"}'
 
-# Run a Cypher query
+# Run an OpenCypher query
 curl -u root:<password> -X POST http://localhost:2480/api/v1/query/bun_railway \
   -H "Content-Type: application/json" \
-  -d '{"language":"cypher","command":"MATCH (n) RETURN count(n)"}'
+  -d '{"language":"opencypher","command":"MATCH (n) RETURN count(n)"}'
 ```
