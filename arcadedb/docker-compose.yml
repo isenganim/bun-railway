@@ -1,0 +1,22 @@
+services:
+  arcadedb:
+    build: .
+    container_name: arcadedb
+    ports:
+      - "${ARCADEDB_HTTP_PORT:-2480}:2480"
+      - "${ARCADEDB_BINARY_PORT:-2424}:2424"
+    environment:
+      JAVA_OPTS: >-
+        -Darcadedb.server.rootPassword=${ARCADEDB_ROOT_PASSWORD:-playwithdata}
+        -Darcadedb.server.defaultDatabases=${ARCADEDB_DATABASE:-bun_railway}[root]
+    volumes:
+      - arcadedb_data:/home/arcadedb/databases
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:2480/api/v1/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  arcadedb_data:
