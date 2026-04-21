@@ -14,26 +14,21 @@ export async function syncPurchased(opts: {
   date: string;
 }): Promise<void> {
   try {
-    await arcadeCommand("opencypher", `
-      MERGE (u:User {id: $userId})
-      ON CREATE SET u.name = $userName, u.username = $username
-      MERGE (p:Product {id: $productId})
-      ON CREATE SET p.name = $productName, p.category = $productCategory, p.price = $productPrice
-      MERGE (u)-[r:PURCHASED {orderId: $orderId, productId: $productId}]->(p)
-      ON CREATE SET r.quantity = $quantity, r.unitPrice = $unitPrice, r.date = $date
-    `, {
-      userId: opts.userId,
-      userName: opts.userName ?? null,
-      username: opts.username ?? null,
-      productId: opts.productId,
-      productName: opts.productName ?? null,
-      productCategory: opts.productCategory ?? null,
-      productPrice: opts.productPrice ?? null,
-      orderId: opts.orderId,
-      quantity: opts.quantity,
-      unitPrice: opts.unitPrice,
-      date: opts.date,
-    });
+    // Upsert user vertex
+    await arcadeCommand("sql",
+      "UPDATE User SET name = :name, username = :username UPSERT WHERE id = :id",
+      { id: opts.userId, name: opts.userName ?? null, username: opts.username ?? null },
+    );
+    // Upsert product vertex
+    await arcadeCommand("sql",
+      "UPDATE Product SET name = :name, category = :category, price = :price UPSERT WHERE id = :id",
+      { id: opts.productId, name: opts.productName ?? null, category: opts.productCategory ?? null, price: opts.productPrice ?? null },
+    );
+    // Create PURCHASED edge
+    await arcadeCommand("sql",
+      `CREATE EDGE PURCHASED FROM (SELECT FROM User WHERE id = :userId) TO (SELECT FROM Product WHERE id = :productId) SET orderId = :orderId, quantity = :quantity, unitPrice = :unitPrice, date = :date`,
+      { userId: opts.userId, productId: opts.productId, orderId: opts.orderId, quantity: opts.quantity, unitPrice: opts.unitPrice, date: opts.date },
+    );
   } catch (err) {
     console.error("[arcadedb-sync] Failed to sync PURCHASED:", err);
   }
@@ -53,26 +48,18 @@ export async function syncReviewed(opts: {
   date: string;
 }): Promise<void> {
   try {
-    await arcadeCommand("opencypher", `
-      MERGE (u:User {id: $userId})
-      ON CREATE SET u.name = $userName, u.username = $username
-      MERGE (p:Product {id: $productId})
-      ON CREATE SET p.name = $productName, p.category = $productCategory, p.price = $productPrice
-      MERGE (u)-[r:REVIEWED {reviewId: $reviewId}]->(p)
-      ON CREATE SET r.rating = $rating, r.comment = $comment, r.date = $date
-    `, {
-      userId: opts.userId,
-      userName: opts.userName ?? null,
-      username: opts.username ?? null,
-      productId: opts.productId,
-      productName: opts.productName ?? null,
-      productCategory: opts.productCategory ?? null,
-      productPrice: opts.productPrice ?? null,
-      reviewId: opts.reviewId,
-      rating: opts.rating,
-      comment: opts.comment,
-      date: opts.date,
-    });
+    await arcadeCommand("sql",
+      "UPDATE User SET name = :name, username = :username UPSERT WHERE id = :id",
+      { id: opts.userId, name: opts.userName ?? null, username: opts.username ?? null },
+    );
+    await arcadeCommand("sql",
+      "UPDATE Product SET name = :name, category = :category, price = :price UPSERT WHERE id = :id",
+      { id: opts.productId, name: opts.productName ?? null, category: opts.productCategory ?? null, price: opts.productPrice ?? null },
+    );
+    await arcadeCommand("sql",
+      `CREATE EDGE REVIEWED FROM (SELECT FROM User WHERE id = :userId) TO (SELECT FROM Product WHERE id = :productId) SET reviewId = :reviewId, rating = :rating, comment = :comment, date = :date`,
+      { userId: opts.userId, productId: opts.productId, reviewId: opts.reviewId, rating: opts.rating, comment: opts.comment, date: opts.date },
+    );
   } catch (err) {
     console.error("[arcadedb-sync] Failed to sync REVIEWED:", err);
   }
@@ -80,8 +67,8 @@ export async function syncReviewed(opts: {
 
 export async function unsyncReviewed(reviewId: number): Promise<void> {
   try {
-    await arcadeCommand("opencypher",
-      `MATCH ()-[r:REVIEWED]->() WHERE r.reviewId = $reviewId DELETE r`,
+    await arcadeCommand("sql",
+      "DELETE FROM REVIEWED WHERE reviewId = :reviewId",
       { reviewId },
     );
   } catch (err) {
