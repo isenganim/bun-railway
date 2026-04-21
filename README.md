@@ -1,12 +1,12 @@
 # Bun + Hono API
 
-REST API built with Bun, Hono, PostgreSQL (Drizzle ORM), and Neo4j — ready to deploy on Railway.
+REST API built with Bun, Hono, PostgreSQL (Drizzle ORM), and ArcadeDB — ready to deploy on Railway/Coolify.
 
 ## Stack
 
 - **Runtime**: Bun
 - **Framework**: Hono
-- **Database**: PostgreSQL via Railway + Neo4j (graph recommendations)
+- **Database**: PostgreSQL + ArcadeDB (graph recommendations)
 - **ORM**: Drizzle ORM
 - **Validation**: Zod + @hono/zod-validator
 - **Auth**: JWT (hono/jwt) + Bun.password (bcrypt)
@@ -22,8 +22,8 @@ REST API built with Bun, Hono, PostgreSQL (Drizzle ORM), and Neo4j — ready to 
 - Order tracking & status history
 - Product search with price range, sorting, top-rated, best-sellers
 - User activity (order history, review history)
-- Neo4j-powered recommendations (collaborative filtering, trending)
-- **Real-time Neo4j sync** — graph updated automatically on every order/review
+- ArcadeDB-powered recommendations (collaborative filtering, trending)
+- **Real-time ArcadeDB sync** — graph updated automatically on every order/review
 - Rate limiting (100 req/min)
 - API versioning (`/api/v1/`)
 - Zod input validation on write endpoints
@@ -37,7 +37,7 @@ bun install
 
 # Copy env
 cp .env.example .env
-# Edit DATABASE_URL, JWT_SECRET, NEO4J_* in .env
+# Edit DATABASE_URL, JWT_SECRET, ARCADEDB_* in .env
 
 # Generate & run migrations
 bunx drizzle-kit generate
@@ -47,28 +47,33 @@ bun run migrate
 bun run seed
 bun run seed:extra
 
-# Sync existing data to Neo4j (first-time or recovery)
-bun run neo4j:sync
+# Sync existing data to ArcadeDB (first-time or recovery)
+bun run arcadedb:sync
 
 # Dev server
 bun run dev
 ```
 
-## Deploy to Railway
+## Deploy
 
 1. Push to GitHub
-2. Create a new project on [Railway](https://railway.app)
-3. Add **PostgreSQL** and **Neo4j** services from Railway
-4. Deploy repo — Railway auto-detects Bun via Railpack
-5. Set environment variables: `DATABASE_URL`, `JWT_SECRET`, `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD`
-6. Run migrations on first deploy:
+2. Deploy **PostgreSQL** and **ArcadeDB** (via Dockerfile in `arcadedb/`)
+3. Deploy the app
+4. Set environment variables:
+   - `DATABASE_URL` — PostgreSQL connection string
+   - `JWT_SECRET` — random secret for JWT
+   - `ARCADEDB_URL` — ArcadeDB HTTP URL (e.g. `http://arcadedb:2480`)
+   - `ARCADEDB_DATABASE` — database name (default: `bun_railway`)
+   - `ARCADEDB_USER` — ArcadeDB user (default: `root`)
+   - `ARCADEDB_PASSWORD` — ArcadeDB password
+5. Run migrations on first deploy:
    ```bash
    bun run migrate && bun run src/index.ts
    ```
 
-## Neo4j Sync
+## ArcadeDB Graph Sync
 
-The API keeps the Neo4j graph in sync automatically:
+The API keeps the ArcadeDB graph in sync automatically:
 
 | Event | Action |
 | --- | --- |
@@ -76,59 +81,17 @@ The API keeps the Neo4j graph in sync automatically:
 | `POST /reviews` | Creates `(User)-[:REVIEWED]->(Product)` |
 | `DELETE /reviews/:id` | Removes the `[:REVIEWED]` relationship |
 
-> Neo4j sync is **fire-and-forget** — if Neo4j is unreachable, orders and reviews still succeed. Errors are logged to the server console.
-
-### End-to-End Sync Example
-
-```bash
-BASE="http://localhost:3000/api/v1"
-
-# 1. Login
-TOKEN=$(curl -s -X POST $BASE/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"john@example.com","password":"password123"}' | jq -r '.data.token')
-
-# 2. Place order → auto-creates (User)-[:PURCHASED]->(Product) in Neo4j
-curl -s -X POST $BASE/orders \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{
-    "shippingAddress": "Jl. Sudirman No. 123, Jakarta",
-    "items": [
-      { "productId": 1, "quantity": 2 },
-      { "productId": 3, "quantity": 1 }
-    ]
-  }' | jq
-
-# 3. Submit review → auto-creates (User)-[:REVIEWED]->(Product) in Neo4j
-REVIEW_ID=$(curl -s -X POST $BASE/reviews \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{"productId": 1, "rating": 5, "comment": "Amazing!"}' | jq '.data.id')
-
-# 4. Verify the graph was updated
-curl -s http://localhost:3000/recommendations/graph-stats | jq
-
-# 5. See recommendations powered by the new data
-curl -s "$BASE/recommendations/products/1" | jq   # also-bought
-curl -s "$BASE/recommendations/users/1" | jq       # personalized
-curl -s "$BASE/recommendations/trending" | jq       # trending
-
-# 6. Delete review → auto-removes [:REVIEWED] edge from Neo4j
-curl -s -X DELETE $BASE/reviews/$REVIEW_ID \
-  -H "Authorization: Bearer $TOKEN" | jq
-```
+> Graph sync is **fire-and-forget** — if ArcadeDB is unreachable, orders and reviews still succeed. Errors are logged to the server console.
 
 ### Manual Full Sync (first-time or recovery)
 
 ```bash
-bun run neo4j:sync
+bun run arcadedb:sync
 ```
 
-This wipes the graph and rebuilds from PostgreSQL. Use after initial setup or if Neo4j was offline for a period.
+This wipes the graph and rebuilds from PostgreSQL. Use after initial setup or if ArcadeDB was offline for a period.
 
 ## API Endpoints
-
 
 Base URL: `/api/v1`
 
@@ -168,21 +131,21 @@ Auth legend: `-` = public · `JWT` = any valid token · `Owner` = resource owner
 
 ### Orders
 
-| Method | Endpoint                      | Auth        | Description                               |
-| ------ | ----------------------------- | ----------- | ----------------------------------------- |
-| GET    | `/api/v1/orders`              | Admin/Mod   | List orders + user info                   |
-| GET    | `/api/v1/orders/:id`          | Owner/Staff | Order detail + items                      |
-| GET    | `/api/v1/orders/:id/tracking` | Owner/Staff | Tracking info + status history            |
-| POST   | `/api/v1/orders`              | JWT         | Place order (coupon support) → syncs Neo4j |
-| PATCH  | `/api/v1/orders/:id/status`   | Admin/Mod   | Update status + tracking + notification   |
+| Method | Endpoint                      | Auth        | Description                                    |
+| ------ | ----------------------------- | ----------- | ---------------------------------------------- |
+| GET    | `/api/v1/orders`              | Admin/Mod   | List orders + user info                        |
+| GET    | `/api/v1/orders/:id`          | Owner/Staff | Order detail + items                           |
+| GET    | `/api/v1/orders/:id/tracking` | Owner/Staff | Tracking info + status history                 |
+| POST   | `/api/v1/orders`              | JWT         | Place order (coupon support) → syncs ArcadeDB  |
+| PATCH  | `/api/v1/orders/:id/status`   | Admin/Mod   | Update status + tracking + notification        |
 
 ### Reviews
 
-| Method | Endpoint                             | Auth      | Description                              |
-| ------ | ------------------------------------ | --------- | ---------------------------------------- |
-| GET    | `/api/v1/reviews/product/:productId` | -         | Reviews per product + stats              |
-| POST   | `/api/v1/reviews`                    | JWT       | Submit review (Zod validated) → syncs Neo4j |
-| DELETE | `/api/v1/reviews/:id`                | Admin/Mod | Delete review → removes from Neo4j      |
+| Method | Endpoint                             | Auth      | Description                                  |
+| ------ | ------------------------------------ | --------- | -------------------------------------------- |
+| GET    | `/api/v1/reviews/product/:productId` | -         | Reviews per product + stats                  |
+| POST   | `/api/v1/reviews`                    | JWT       | Submit review (Zod validated) → syncs ArcadeDB |
+| DELETE | `/api/v1/reviews/:id`                | Admin/Mod | Delete review → removes from ArcadeDB        |
 
 ### Wishlists
 
@@ -225,26 +188,26 @@ Auth legend: `-` = public · `JWT` = any valid token · `Owner` = resource owner
 | POST   | `/api/v1/notifications`                            | Admin       | Create notification |
 | DELETE | `/api/v1/notifications/:id`                        | Owner/Admin | Delete notification |
 
-### Recommendations (Neo4j)
+### Recommendations (ArcadeDB)
 
-| Method | Endpoint                                    | Description                        |
-| ------ | ------------------------------------------- | ---------------------------------- |
-| GET    | `/api/v1/recommendations/products/:id`      | "Users who bought this also bought..." |
-| GET    | `/api/v1/recommendations/users/:id`         | Personalized recommendations       |
-| GET    | `/api/v1/recommendations/trending`          | Trending products                  |
-| GET    | `/api/v1/recommendations/similar-users/:id` | Similar users by purchase pattern  |
-| GET    | `/api/v1/recommendations/graph-stats`       | Neo4j graph overview               |
+| Method | Endpoint                                    | Description                              |
+| ------ | ------------------------------------------- | ---------------------------------------- |
+| GET    | `/api/v1/recommendations/products/:id`      | "Users who bought this also bought..."   |
+| GET    | `/api/v1/recommendations/users/:id`         | Personalized recommendations             |
+| GET    | `/api/v1/recommendations/trending`          | Trending products                        |
+| GET    | `/api/v1/recommendations/similar-users/:id` | Similar users by purchase pattern        |
+| GET    | `/api/v1/recommendations/graph-stats`       | ArcadeDB graph overview                  |
 
 ### Health & Meta
 
-| Endpoint        | Description                         |
-| --------------- | ----------------------------------- |
-| `GET /`         | API info + route index              |
-| `GET /health`   | Server health                       |
-| `GET /health/db`| PostgreSQL + Neo4j connectivity     |
-| `GET /stats`    | Row counts across all tables        |
-| `GET /docs`     | Interactive API docs (Scalar UI)    |
-| `GET /openapi.json` | OpenAPI 3.1 spec               |
+| Endpoint           | Description                            |
+| ------------------ | -------------------------------------- |
+| `GET /`            | API info + route index                 |
+| `GET /health`      | Server health                          |
+| `GET /health/db`   | PostgreSQL + ArcadeDB connectivity     |
+| `GET /stats`       | Row counts across all tables           |
+| `GET /docs`        | Interactive API docs (Scalar UI)       |
+| `GET /openapi.json`| OpenAPI 3.1 spec                       |
 
 ## Query Parameters
 
@@ -255,46 +218,5 @@ GET /api/v1/orders?page=1&limit=20
 GET /api/v1/notifications/users/1?unread=true
 ```
 
-Product sort values: `price_asc`, `price_desc` (default: newest first)  
+Product sort values: `price_asc`, `price_desc` (default: newest first)
 Product categories: `electronics`, `clothing`, `food`, `books`, `sports`, `home`, `beauty`, `toys`
-
-## Example Requests
-
-```bash
-# Register
-curl -X POST http://localhost:3000/api/v1/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"name":"John","email":"john@example.com","username":"john","password":"password123"}'
-
-# Login — save token
-TOKEN=$(curl -s -X POST http://localhost:3000/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"john@example.com","password":"password123"}' | jq -r '.data.token')
-
-# Create product (admin)
-curl -X POST http://localhost:3000/api/v1/products \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{"name":"iPhone 15","price":999,"stock":50,"category":"electronics"}'
-
-# Create order with coupon (syncs Neo4j automatically)
-curl -X POST http://localhost:3000/api/v1/orders \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{
-    "shippingAddress": "Jl. Sudirman No. 123, Jakarta",
-    "couponCode": "SAVE10",
-    "items": [
-      { "productId": 1, "quantity": 2 }
-    ]
-  }'
-
-# Get personalized recommendations
-curl http://localhost:3000/api/v1/recommendations/users/1
-
-# Add to wishlist
-curl -X POST http://localhost:3000/api/v1/wishlists/users/1 \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{"productId": 5}'
-```

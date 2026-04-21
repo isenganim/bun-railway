@@ -8,7 +8,7 @@ import { orders, orderItems, orderStatusHistory, products, users, coupons, notif
 import { createOrderSchema, updateOrderStatusSchema, parsePagination } from "../validators";
 import { authMiddleware, requireRole, getCurrentUser } from "../middleware/auth";
 import { ok, created, notFound, badRequest, paginate } from "../lib/response";
-import { syncPurchased } from "../lib/neo4j-sync";
+import { syncPurchased } from "../lib/arcadedb-sync";
 
 const app = new Hono();
 
@@ -291,8 +291,8 @@ app.post(
     if (order === "INSUFFICIENT_STOCK") return badRequest(c, "Insufficient stock for one or more products");
     if (!order) return badRequest(c, "Coupon usage limit reached");
 
-    // ── Neo4j: fire-and-forget sync ───────────────────────────────────────────
-    // Run after the PG transaction is confirmed. Neo4j failures don't affect
+    // ── ArcadeDB: fire-and-forget sync ──────────────────────────────────────────
+    // Run after the PG transaction is confirmed. ArcadeDB failures don't affect
     // the response — the order is already committed.
     Promise.all(
       itemsToInsert.map((item) =>

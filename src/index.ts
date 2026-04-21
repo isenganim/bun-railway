@@ -5,7 +5,7 @@ import { prettyJSON } from "hono/pretty-json";
 import { count } from "drizzle-orm";
 import { db } from "./db";
 import * as schema from "./db/schema";
-import { getNeo4jDriver } from "./db/neo4j";
+import { arcadeReady } from "./db/arcadedb";
 import { rateLimiter } from "./middleware/rate-limit";
 import { openAPIRouteHandler } from "hono-openapi";
 import { Scalar } from "@scalar/hono-api-reference";
@@ -62,20 +62,16 @@ app.get("/health/db", async (c) => {
     results.postgresql = { status: "error", error: err instanceof Error ? err.message : String(err) };
   }
 
-  // Check Neo4j
-  const neo4jStart = Date.now();
+  // Check ArcadeDB
+  const arcadeStart = Date.now();
   try {
-    const driver = getNeo4jDriver();
-    const session = driver.session();
-    const result = await session.run("RETURN 1 AS ok");
-    await session.close();
-    const ok = result.records[0]?.get("ok");
-    results.neo4j = {
-      status: ok ? "connected" : "error",
-      latency: `${Date.now() - neo4jStart}ms`,
+    const ready = await arcadeReady();
+    results.arcadedb = {
+      status: ready ? "connected" : "error",
+      latency: `${Date.now() - arcadeStart}ms`,
     };
   } catch (err) {
-    results.neo4j = { status: "error", latency: `${Date.now() - neo4jStart}ms`, error: err instanceof Error ? err.message : String(err) };
+    results.arcadedb = { status: "error", latency: `${Date.now() - arcadeStart}ms`, error: err instanceof Error ? err.message : String(err) };
   }
 
   const allHealthy = Object.values(results).every((r) => r.status === "connected");
@@ -132,7 +128,7 @@ app.get(
         version: "2.0.0",
         description:
           "E-commerce REST API built with Bun, Hono, Drizzle ORM, and PostgreSQL. " +
-          "Includes auth (JWT), RBAC (admin / moderator / user), products, orders, reviews, wishlists, coupons, categories, notifications, and Neo4j-powered recommendations.",
+          "Includes auth (JWT), RBAC (admin / moderator / user), products, orders, reviews, wishlists, coupons, categories, notifications, and ArcadeDB-powered recommendations.",
         contact: {
           name: "API Support",
           email: "support@example.com",
@@ -151,7 +147,7 @@ app.get(
         { name: "Coupons", description: "Discount coupon management" },
         { name: "Categories", description: "Product category tree" },
         { name: "Notifications", description: "User notification inbox" },
-        { name: "Recommendations", description: "Neo4j-powered product recommendations" },
+        { name: "Recommendations", description: "ArcadeDB-powered product recommendations" },
       ],
       components: {
         securitySchemes: {
