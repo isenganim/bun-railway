@@ -14,7 +14,7 @@
 #   BASE_URL=https://your-railway-url.railway.app ./neo4j-demo.sh
 # =============================================================================
 
-BASE_URL="${BASE_URL:-http://flpxteaiw1rsjdfka4cjh0pu.16.78.105.220.sslip.io}"
+BASE_URL="${BASE_URL:-http://localhost:3000}"
 API="$BASE_URL/api/v1"
 
 # Colors

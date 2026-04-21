@@ -2,12 +2,15 @@ const ARCADEDB_URL = process.env.ARCADEDB_URL || "http://localhost:2480";
 const ARCADEDB_DATABASE = process.env.ARCADEDB_DATABASE || "bun_railway";
 const ARCADEDB_USER = process.env.ARCADEDB_USER || "root";
 const ARCADEDB_PASSWORD =
-  process.env.ARCADEDB_PASSWORD ??
+  process.env.ARCADEDB_PASSWORD?.trim() ||
   (process.env.NODE_ENV === "production"
     ? (() => { throw new Error("ARCADEDB_PASSWORD is required in production"); })()
     : "playwithdata");
 
-const ARCADEDB_TIMEOUT_MS = Number(process.env.ARCADEDB_TIMEOUT_MS ?? 5000);
+const ARCADEDB_TIMEOUT_MS = (() => {
+  const t = Number(process.env.ARCADEDB_TIMEOUT_MS ?? 5000);
+  return Number.isFinite(t) && t >= 0 ? t : 5000;
+})();
 
 const auth = "Basic " + btoa(`${ARCADEDB_USER}:${ARCADEDB_PASSWORD}`);
 
