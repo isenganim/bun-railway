@@ -8,7 +8,7 @@ const ARCADEDB_USER = process.env.ARCADEDB_USER || "root";
 const ARCADEDB_PASSWORD = process.env.ARCADEDB_PASSWORD?.trim() || "playwithdata";
 const auth = "Basic " + btoa(`${ARCADEDB_USER}:${ARCADEDB_PASSWORD}`);
 
-const SYNC_TIMEOUT = 120_000; // 2 minutes for bulk ops
+const SYNC_TIMEOUT = 120_000;
 
 async function syncCommand(language: string, command: string, params?: Record<string, unknown>) {
   const res = await fetch(`${ARCADEDB_URL}/api/v1/command/${ARCADEDB_DATABASE}`, {
@@ -21,24 +21,18 @@ async function syncCommand(language: string, command: string, params?: Record<st
   return res.json();
 }
 
-async function withRetry<T>(fn: () => Promise<T>, retries = 5): Promise<T> {
-  for (let i = 0; i <= retries; i++) {
-    try { return await fn(); }
-    catch (e: any) {
-      if (i < retries && e.message?.includes("ConcurrentModification")) {
-        await new Promise(r => setTimeout(r, 100 * (i + 1)));
-        continue;
-      }
-      throw e;
-    }
-  }
-  throw new Error("Unreachable");
+function escapeSQL(val: unknown): string {
+  if (val === null || val === undefined) return "null";
+  if (typeof val === "number" || typeof val === "boolean") return String(val);
+  return `'${String(val).replace(/'/g, "''")}'`;
 }
 
-async function runInBatches<T>(items: T[], fn: (item: T) => Promise<unknown>, concurrency = 5) {
-  for (let i = 0; i < items.length; i += concurrency) {
-    await Promise.all(items.slice(i, i + concurrency).map(item => withRetry(() => fn(item))));
-  }
+const BATCH_SIZE = 200;
+
+function chunk<T>(arr: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) chunks.push(arr.slice(i, i + size));
+  return chunks;
 }
 
 async function syncToArcadeDB() {
@@ -59,23 +53,25 @@ async function syncToArcadeDB() {
     await syncCommand("sql", "DELETE FROM User");
     await syncCommand("sql", "DELETE FROM Product");
 
+    // Batch insert users via sqlscript
     const allUsers = await db.select().from(users);
     console.log(`  Syncing ${allUsers.length} users...`);
-    await runInBatches(allUsers, (user) =>
-      syncCommand("sql",
-        "CREATE VERTEX User SET id = :id, name = :name, email = :email, username = :username, role = :role, status = :status",
-        { id: user.id, name: user.name, email: user.email, username: user.username, role: user.role, status: user.status },
-      ),
-    );
+    for (const batch of chunk(allUsers, BATCH_SIZE)) {
+      const script = batch.map(u =>
+        `CREATE VERTEX User SET id = ${u.id}, name = ${escapeSQL(u.name)}, email = ${escapeSQL(u.email)}, username = ${escapeSQL(u.username)}, role = ${escapeSQL(u.role)}, status = ${escapeSQL(u.status)};`
+      ).join("\n");
+      await syncCommand("sqlscript", script);
+    }
 
+    // Batch insert products via sqlscript
     const allProducts = await db.select().from(products);
     console.log(`  Syncing ${allProducts.length} products...`);
-    await runInBatches(allProducts, (product) =>
-      syncCommand("sql",
-        "CREATE VERTEX Product SET id = :id, name = :name, slug = :slug, price = :price, category = :category, stock = :stock, isActive = :isActive",
-        { id: product.id, name: product.name, slug: product.slug, price: String(product.price), category: product.category, stock: product.stock, isActive: product.isActive },
-      ),
-    );
+    for (const batch of chunk(allProducts, BATCH_SIZE)) {
+      const script = batch.map(p =>
+        `CREATE VERTEX Product SET id = ${p.id}, name = ${escapeSQL(p.name)}, slug = ${escapeSQL(p.slug)}, price = ${escapeSQL(String(p.price))}, category = ${escapeSQL(p.category)}, stock = ${p.stock}, isActive = ${p.isActive};`
+      ).join("\n");
+      await syncCommand("sqlscript", script);
+    }
 
     console.log("  Creating indexes...");
     await syncCommand("sql", "CREATE PROPERTY User.id IF NOT EXISTS INTEGER");
@@ -83,6 +79,7 @@ async function syncToArcadeDB() {
     await syncCommand("sql", "CREATE INDEX IF NOT EXISTS ON User (id) UNIQUE");
     await syncCommand("sql", "CREATE INDEX IF NOT EXISTS ON Product (id) UNIQUE");
 
+    // Build purchase edges
     const allOrderItems = await db.select().from(orderItems);
     const itemsByOrder = new Map<number, typeof allOrderItems>();
     for (const item of allOrderItems) {
@@ -91,7 +88,6 @@ async function syncToArcadeDB() {
       itemsByOrder.set(item.orderId, list);
     }
 
-    // Build flat list of purchase edges
     const allOrders = await db.select().from(orders);
     const purchaseEdges: { userId: number; productId: number; orderId: number; quantity: number; unitPrice: number; date: string }[] = [];
     for (const order of allOrders) {
@@ -99,26 +95,27 @@ async function syncToArcadeDB() {
         purchaseEdges.push({ userId: order.userId, productId: item.productId, orderId: order.id, quantity: item.quantity, unitPrice: Number(item.unitPrice), date: order.createdAt.toISOString() });
       }
     }
-    console.log(`  Syncing ${purchaseEdges.length} purchase edges (from ${allOrders.length} orders)...`);
-    await runInBatches(purchaseEdges, (e) =>
-      syncCommand("opencypher", `
-        MATCH (u:User {id: $userId}), (p:Product {id: $productId})
-        CREATE (u)-[:PURCHASED {orderId: $orderId, quantity: $quantity, unitPrice: $unitPrice, date: $date}]->(p)
-      `, e),
-    );
 
+    console.log(`  Syncing ${purchaseEdges.length} purchase edges (from ${allOrders.length} orders)...`);
+    for (const batch of chunk(purchaseEdges, BATCH_SIZE)) {
+      const script = batch.map(e =>
+        `CREATE EDGE PURCHASED FROM (SELECT FROM User WHERE id = ${e.userId}) TO (SELECT FROM Product WHERE id = ${e.productId}) SET orderId = ${e.orderId}, quantity = ${e.quantity}, unitPrice = ${e.unitPrice}, date = ${escapeSQL(e.date)};`
+      ).join("\n");
+      await syncCommand("sqlscript", script);
+    }
+
+    // Batch insert review edges
     const allReviews = await db.select().from(reviews);
     console.log(`  Syncing ${allReviews.length} reviews...`);
-    await runInBatches(allReviews, (review) =>
-      syncCommand("opencypher", `
-        MATCH (u:User {id: $userId}), (p:Product {id: $productId})
-        CREATE (u)-[:REVIEWED {reviewId: $reviewId, rating: $rating, comment: $comment, date: $date}]->(p)
-      `, { userId: review.userId, productId: review.productId, reviewId: review.id, rating: review.rating, comment: review.comment ?? "", date: review.createdAt.toISOString() }),
-    );
+    for (const batch of chunk(allReviews, BATCH_SIZE)) {
+      const script = batch.map(r =>
+        `CREATE EDGE REVIEWED FROM (SELECT FROM User WHERE id = ${r.userId}) TO (SELECT FROM Product WHERE id = ${r.productId}) SET reviewId = ${r.id}, rating = ${r.rating}, comment = ${escapeSQL(r.comment ?? "")}, date = ${escapeSQL(r.createdAt.toISOString())};`
+      ).join("\n");
+      await syncCommand("sqlscript", script);
+    }
 
     console.log("✅ Sync complete!");
 
-    // Print summary
     const { result } = await arcadeQuery("opencypher", `
       MATCH (u:User) WITH count(u) AS users
       MATCH (p:Product) WITH users, count(p) AS products
