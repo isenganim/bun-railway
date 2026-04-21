@@ -1,55 +1,76 @@
 import { db } from "../db";
 import { users, products, orders, orderItems, reviews } from "../db/schema";
-import { arcadeCommand, arcadeQuery } from "../db/arcadedb";
+import { arcadeQuery } from "../db/arcadedb";
+
+const ARCADEDB_URL = process.env.ARCADEDB_URL || "http://localhost:2480";
+const ARCADEDB_DATABASE = process.env.ARCADEDB_DATABASE || "bun_railway";
+const ARCADEDB_USER = process.env.ARCADEDB_USER || "root";
+const ARCADEDB_PASSWORD = process.env.ARCADEDB_PASSWORD?.trim() || "playwithdata";
+const auth = "Basic " + btoa(`${ARCADEDB_USER}:${ARCADEDB_PASSWORD}`);
+
+const SYNC_TIMEOUT = 120_000; // 2 minutes for bulk ops
+
+async function syncCommand(language: string, command: string, params?: Record<string, unknown>) {
+  const res = await fetch(`${ARCADEDB_URL}/api/v1/command/${ARCADEDB_DATABASE}`, {
+    method: "POST",
+    headers: { Authorization: auth, "Content-Type": "application/json" },
+    body: JSON.stringify({ language, command, params }),
+    signal: AbortSignal.timeout(SYNC_TIMEOUT),
+  });
+  if (!res.ok) throw new Error(`ArcadeDB command error: ${res.status} ${await res.text()}`);
+  return res.json();
+}
+
+const BATCH_SIZE = 50;
+
+async function runInBatches<T>(items: T[], fn: (item: T) => Promise<unknown>) {
+  for (let i = 0; i < items.length; i += BATCH_SIZE) {
+    await Promise.all(items.slice(i, i + BATCH_SIZE).map(fn));
+  }
+}
 
 async function syncToArcadeDB() {
   try {
     console.log("🔄 Syncing data to ArcadeDB...");
 
-    // Ensure vertex/edge types exist
     console.log("  Creating schema types...");
     for (const cmd of [
       "CREATE VERTEX TYPE User IF NOT EXISTS",
       "CREATE VERTEX TYPE Product IF NOT EXISTS",
       "CREATE EDGE TYPE PURCHASED IF NOT EXISTS",
       "CREATE EDGE TYPE REVIEWED IF NOT EXISTS",
-    ]) await arcadeCommand("sql", cmd);
+    ]) await syncCommand("sql", cmd);
 
-    // Clear existing data
     console.log("  Clearing existing graph data...");
-    await arcadeCommand("sql", "DELETE FROM PURCHASED");
-    await arcadeCommand("sql", "DELETE FROM REVIEWED");
-    await arcadeCommand("sql", "DELETE FROM User");
-    await arcadeCommand("sql", "DELETE FROM Product");
+    await syncCommand("sql", "DELETE FROM PURCHASED");
+    await syncCommand("sql", "DELETE FROM REVIEWED");
+    await syncCommand("sql", "DELETE FROM User");
+    await syncCommand("sql", "DELETE FROM Product");
 
-    // Sync users
     const allUsers = await db.select().from(users);
     console.log(`  Syncing ${allUsers.length} users...`);
-    for (const user of allUsers) {
-      await arcadeCommand("sql",
+    await runInBatches(allUsers, (user) =>
+      syncCommand("sql",
         "CREATE VERTEX User SET id = :id, name = :name, email = :email, username = :username, role = :role, status = :status",
         { id: user.id, name: user.name, email: user.email, username: user.username, role: user.role, status: user.status },
-      );
-    }
+      ),
+    );
 
-    // Sync products
     const allProducts = await db.select().from(products);
     console.log(`  Syncing ${allProducts.length} products...`);
-    for (const product of allProducts) {
-      await arcadeCommand("sql",
+    await runInBatches(allProducts, (product) =>
+      syncCommand("sql",
         "CREATE VERTEX Product SET id = :id, name = :name, slug = :slug, price = :price, category = :category, stock = :stock, isActive = :isActive",
         { id: product.id, name: product.name, slug: product.slug, price: String(product.price), category: product.category, stock: product.stock, isActive: product.isActive },
-      );
-    }
+      ),
+    );
 
-    // Define properties and create indexes
     console.log("  Creating indexes...");
-    await arcadeCommand("sql", "CREATE PROPERTY User.id IF NOT EXISTS INTEGER");
-    await arcadeCommand("sql", "CREATE PROPERTY Product.id IF NOT EXISTS INTEGER");
-    await arcadeCommand("sql", "CREATE INDEX IF NOT EXISTS ON User (id) UNIQUE");
-    await arcadeCommand("sql", "CREATE INDEX IF NOT EXISTS ON Product (id) UNIQUE");
+    await syncCommand("sql", "CREATE PROPERTY User.id IF NOT EXISTS INTEGER");
+    await syncCommand("sql", "CREATE PROPERTY Product.id IF NOT EXISTS INTEGER");
+    await syncCommand("sql", "CREATE INDEX IF NOT EXISTS ON User (id) UNIQUE");
+    await syncCommand("sql", "CREATE INDEX IF NOT EXISTS ON Product (id) UNIQUE");
 
-    // Preload all order items to avoid N+1 queries
     const allOrderItems = await db.select().from(orderItems);
     const itemsByOrder = new Map<number, typeof allOrderItems>();
     for (const item of allOrderItems) {
@@ -58,28 +79,30 @@ async function syncToArcadeDB() {
       itemsByOrder.set(item.orderId, list);
     }
 
-    // Sync orders as PURCHASED relationships
+    // Build flat list of purchase edges
     const allOrders = await db.select().from(orders);
-    console.log(`  Syncing ${allOrders.length} orders...`);
+    const purchaseEdges: { userId: number; productId: number; orderId: number; quantity: number; unitPrice: number; date: string }[] = [];
     for (const order of allOrders) {
-      const items = itemsByOrder.get(order.id) ?? [];
-      for (const item of items) {
-        await arcadeCommand("opencypher", `
-          MATCH (u:User {id: $userId}), (p:Product {id: $productId})
-          CREATE (u)-[:PURCHASED {orderId: $orderId, quantity: $quantity, unitPrice: $unitPrice, date: $date}]->(p)
-        `, { userId: order.userId, productId: item.productId, orderId: order.id, quantity: item.quantity, unitPrice: Number(item.unitPrice), date: order.createdAt.toISOString() });
+      for (const item of itemsByOrder.get(order.id) ?? []) {
+        purchaseEdges.push({ userId: order.userId, productId: item.productId, orderId: order.id, quantity: item.quantity, unitPrice: Number(item.unitPrice), date: order.createdAt.toISOString() });
       }
     }
+    console.log(`  Syncing ${purchaseEdges.length} purchase edges (from ${allOrders.length} orders)...`);
+    await runInBatches(purchaseEdges, (e) =>
+      syncCommand("opencypher", `
+        MATCH (u:User {id: $userId}), (p:Product {id: $productId})
+        CREATE (u)-[:PURCHASED {orderId: $orderId, quantity: $quantity, unitPrice: $unitPrice, date: $date}]->(p)
+      `, e),
+    );
 
-    // Sync reviews as REVIEWED relationships
     const allReviews = await db.select().from(reviews);
     console.log(`  Syncing ${allReviews.length} reviews...`);
-    for (const review of allReviews) {
-      await arcadeCommand("opencypher", `
+    await runInBatches(allReviews, (review) =>
+      syncCommand("opencypher", `
         MATCH (u:User {id: $userId}), (p:Product {id: $productId})
         CREATE (u)-[:REVIEWED {reviewId: $reviewId, rating: $rating, comment: $comment, date: $date}]->(p)
-      `, { userId: review.userId, productId: review.productId, reviewId: review.id, rating: review.rating, comment: review.comment ?? "", date: review.createdAt.toISOString() });
-    }
+      `, { userId: review.userId, productId: review.productId, reviewId: review.id, rating: review.rating, comment: review.comment ?? "", date: review.createdAt.toISOString() }),
+    );
 
     console.log("✅ Sync complete!");
 
