@@ -29,7 +29,7 @@ export async function arcadeCommand(language: string, command: string, params?: 
   const res = await fetch(`${ARCADEDB_URL}/api/v1/command/${ARCADEDB_DATABASE}`, {
     method: "POST",
     headers: { Authorization: auth, "Content-Type": "application/json" },
-    body: JSON.stringify({ language, command, params }),
+    body: JSON.stringify({ language, command, params, retry: 5 }),
     signal: AbortSignal.timeout(ARCADEDB_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`ArcadeDB command error: ${res.status} ${await res.text()}`);
