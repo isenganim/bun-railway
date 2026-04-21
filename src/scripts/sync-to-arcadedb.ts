@@ -42,8 +42,10 @@ async function syncToArcadeDB() {
       );
     }
 
-    // Create indexes — do not swallow errors; IF NOT EXISTS makes this safe to re-run
+    // Define properties and create indexes
     console.log("  Creating indexes...");
+    await arcadeCommand("sql", "CREATE PROPERTY User.id IF NOT EXISTS INTEGER");
+    await arcadeCommand("sql", "CREATE PROPERTY Product.id IF NOT EXISTS INTEGER");
     await arcadeCommand("sql", "CREATE INDEX IF NOT EXISTS ON User (id) UNIQUE");
     await arcadeCommand("sql", "CREATE INDEX IF NOT EXISTS ON Product (id) UNIQUE");
 
