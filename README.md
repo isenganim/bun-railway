@@ -81,7 +81,14 @@ The API keeps the ArcadeDB graph in sync automatically:
 | `POST /reviews` | Creates `(User)-[:REVIEWED]->(Product)` |
 | `DELETE /reviews/:id` | Removes the `[:REVIEWED]` relationship |
 
-> Graph sync is **fire-and-forget** — if ArcadeDB is unreachable, orders and reviews still succeed. Errors are logged to the server console.
+> Graph sync is **fire-and-forget** with a **serialized queue** — writes are processed one at a time to avoid ArcadeDB page conflicts. If ArcadeDB is unreachable, orders and reviews still succeed. Errors are logged to the server console.
+
+### How it works
+
+- Real-time sync uses **SQL** (`UPDATE ... UPSERT` + `CREATE EDGE`) via ArcadeDB's native `sqlscript` language
+- All items in a single order are batched into **one `sqlscript` transaction** (1 HTTP request per order, not per item)
+- A **promise queue** serializes all ArcadeDB writes to prevent `ConcurrentModificationException`
+- Server-side `retry: 5` is set on all commands for additional resilience
 
 ### Manual Full Sync (first-time or recovery)
 
@@ -89,7 +96,7 @@ The API keeps the ArcadeDB graph in sync automatically:
 bun run arcadedb:sync
 ```
 
-This wipes the graph and rebuilds from PostgreSQL. Use after initial setup or if ArcadeDB was offline for a period.
+This wipes the graph and rebuilds from PostgreSQL using batched `sqlscript` inserts (200 records per request). Use after initial setup or if ArcadeDB was offline for a period.
 
 ## API Endpoints
 
