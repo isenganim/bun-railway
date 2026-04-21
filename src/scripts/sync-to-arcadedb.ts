@@ -14,18 +14,30 @@ async function syncCommand(language: string, command: string, params?: Record<st
   const res = await fetch(`${ARCADEDB_URL}/api/v1/command/${ARCADEDB_DATABASE}`, {
     method: "POST",
     headers: { Authorization: auth, "Content-Type": "application/json" },
-    body: JSON.stringify({ language, command, params }),
+    body: JSON.stringify({ language, command, params, retry: 5 }),
     signal: AbortSignal.timeout(SYNC_TIMEOUT),
   });
   if (!res.ok) throw new Error(`ArcadeDB command error: ${res.status} ${await res.text()}`);
   return res.json();
 }
 
-const BATCH_SIZE = 50;
+async function withRetry<T>(fn: () => Promise<T>, retries = 5): Promise<T> {
+  for (let i = 0; i <= retries; i++) {
+    try { return await fn(); }
+    catch (e: any) {
+      if (i < retries && e.message?.includes("ConcurrentModification")) {
+        await new Promise(r => setTimeout(r, 100 * (i + 1)));
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw new Error("Unreachable");
+}
 
-async function runInBatches<T>(items: T[], fn: (item: T) => Promise<unknown>) {
-  for (let i = 0; i < items.length; i += BATCH_SIZE) {
-    await Promise.all(items.slice(i, i + BATCH_SIZE).map(fn));
+async function runInBatches<T>(items: T[], fn: (item: T) => Promise<unknown>, concurrency = 5) {
+  for (let i = 0; i < items.length; i += concurrency) {
+    await Promise.all(items.slice(i, i + concurrency).map(item => withRetry(() => fn(item))));
   }
 }
 
