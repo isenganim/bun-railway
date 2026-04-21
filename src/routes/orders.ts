@@ -294,23 +294,21 @@ app.post(
     // ── ArcadeDB: fire-and-forget sync ──────────────────────────────────────────
     // Run after the PG transaction is confirmed. ArcadeDB failures don't affect
     // the response — the order is already committed.
-    Promise.all(
-      itemsToInsert.map((item) =>
-        syncPurchased({
-          userId,
-          userName: userExists.name,
-          username: userExists.username,
-          productId: item.productId,
-          productName: item.productName,
-          productCategory: item.productCategory,
-          productPrice: item.productPrice,
-          orderId: order.id,
-          quantity: item.quantity,
-          unitPrice: Number(item.unitPrice),
-          date: order.createdAt.toISOString(),
-        }),
-      ),
-    ).catch(() => {/* already logged inside syncPurchased */});
+    syncPurchased({
+      userId,
+      userName: userExists.name,
+      username: userExists.username,
+      items: itemsToInsert.map((item) => ({
+        productId: item.productId,
+        productName: item.productName,
+        productCategory: item.productCategory,
+        productPrice: item.productPrice,
+        quantity: item.quantity,
+        unitPrice: Number(item.unitPrice),
+      })),
+      orderId: order.id,
+      date: order.createdAt.toISOString(),
+    }).catch(() => {/* already logged inside syncPurchased */});
 
     return created(c, order);
   },
