@@ -308,7 +308,7 @@ app.post(
       })),
       orderId: order.id,
       date: order.createdAt.toISOString(),
-    }).catch(() => {/* already logged inside syncPurchased */});
+    });
 
     return created(c, order);
   },

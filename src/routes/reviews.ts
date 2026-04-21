@@ -136,7 +136,7 @@ app.post(
       rating: body.rating,
       comment: body.comment ?? "",
       date: review.createdAt.toISOString(),
-    }).catch(() => {/* already logged inside syncReviewed */});
+    });
 
     return created(c, review);
   },
@@ -169,7 +169,7 @@ app.delete(
     if (!review) return notFound(c, "Review not found");
 
     // ── ArcadeDB: remove relationship ───────────────────────────────────────────
-    unsyncReviewed(review.id).catch(() => {/* already logged inside unsyncReviewed */});
+    unsyncReviewed(review.id);
 
     return ok(c, { message: "Review deleted" });
   },
