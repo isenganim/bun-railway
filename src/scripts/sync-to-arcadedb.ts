@@ -21,12 +21,6 @@ async function syncCommand(language: string, command: string, params?: Record<st
   return res.json();
 }
 
-function escapeSQL(val: unknown): string {
-  if (val === null || val === undefined) return "null";
-  if (typeof val === "number" || typeof val === "boolean") return String(val);
-  return `'${String(val).replace(/'/g, "''")}'`;
-}
-
 const BATCH_SIZE = 200;
 
 function chunk<T>(arr: T[], size: number): T[][] {
@@ -53,22 +47,22 @@ async function syncToArcadeDB() {
     await syncCommand("sql", "DELETE FROM User");
     await syncCommand("sql", "DELETE FROM Product");
 
-    // Batch insert users via sqlscript
+    // Batch insert users via sqlscript + JSON CONTENT
     const allUsers = await db.select().from(users);
     console.log(`  Syncing ${allUsers.length} users...`);
     for (const batch of chunk(allUsers, BATCH_SIZE)) {
       const script = batch.map(u =>
-        `CREATE VERTEX User SET id = ${u.id}, name = ${escapeSQL(u.name)}, email = ${escapeSQL(u.email)}, username = ${escapeSQL(u.username)}, role = ${escapeSQL(u.role)}, status = ${escapeSQL(u.status)};`
+        `CREATE VERTEX User CONTENT ${JSON.stringify({ id: u.id, name: u.name, email: u.email, username: u.username, role: u.role, status: u.status })};`
       ).join("\n");
       await syncCommand("sqlscript", script);
     }
 
-    // Batch insert products via sqlscript
+    // Batch insert products via sqlscript + JSON CONTENT
     const allProducts = await db.select().from(products);
     console.log(`  Syncing ${allProducts.length} products...`);
     for (const batch of chunk(allProducts, BATCH_SIZE)) {
       const script = batch.map(p =>
-        `CREATE VERTEX Product SET id = ${p.id}, name = ${escapeSQL(p.name)}, slug = ${escapeSQL(p.slug)}, price = ${escapeSQL(String(p.price))}, category = ${escapeSQL(p.category)}, stock = ${p.stock}, isActive = ${p.isActive};`
+        `CREATE VERTEX Product CONTENT ${JSON.stringify({ id: p.id, name: p.name, slug: p.slug, price: String(p.price), category: p.category, stock: p.stock, isActive: p.isActive })};`
       ).join("\n");
       await syncCommand("sqlscript", script);
     }
@@ -99,7 +93,7 @@ async function syncToArcadeDB() {
     console.log(`  Syncing ${purchaseEdges.length} purchase edges (from ${allOrders.length} orders)...`);
     for (const batch of chunk(purchaseEdges, BATCH_SIZE)) {
       const script = batch.map(e =>
-        `CREATE EDGE PURCHASED FROM (SELECT FROM User WHERE id = ${e.userId}) TO (SELECT FROM Product WHERE id = ${e.productId}) SET orderId = ${e.orderId}, quantity = ${e.quantity}, unitPrice = ${e.unitPrice}, date = ${escapeSQL(e.date)};`
+        `CREATE EDGE PURCHASED FROM (SELECT FROM User WHERE id = ${e.userId}) TO (SELECT FROM Product WHERE id = ${e.productId}) CONTENT ${JSON.stringify({ orderId: e.orderId, quantity: e.quantity, unitPrice: e.unitPrice, date: e.date })};`
       ).join("\n");
       await syncCommand("sqlscript", script);
     }
@@ -109,7 +103,7 @@ async function syncToArcadeDB() {
     console.log(`  Syncing ${allReviews.length} reviews...`);
     for (const batch of chunk(allReviews, BATCH_SIZE)) {
       const script = batch.map(r =>
-        `CREATE EDGE REVIEWED FROM (SELECT FROM User WHERE id = ${r.userId}) TO (SELECT FROM Product WHERE id = ${r.productId}) SET reviewId = ${r.id}, rating = ${r.rating}, comment = ${escapeSQL(r.comment ?? "")}, date = ${escapeSQL(r.createdAt.toISOString())};`
+        `CREATE EDGE REVIEWED FROM (SELECT FROM User WHERE id = ${r.userId}) TO (SELECT FROM Product WHERE id = ${r.productId}) CONTENT ${JSON.stringify({ reviewId: r.id, rating: r.rating, comment: r.comment ?? "", date: r.createdAt.toISOString() })};`
       ).join("\n");
       await syncCommand("sqlscript", script);
     }
