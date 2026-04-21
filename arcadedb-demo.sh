@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # =============================================================================
-# neo4j-demo.sh — Simulate purchases & reviews, then explore Neo4j graph
+# arcadedb-demo.sh — Simulate purchases & reviews, then explore ArcadeDB graph
 # =============================================================================
 # What this script does:
 #   1. Login as 5 regular users → each places 2-3 orders with multiple items
 #   2. Each user submits reviews on the products they bought
 #   3. Login as moderator → update order statuses
-#   4. Query Neo4j-powered recommendations to see the graph in action
+#   4. Query ArcadeDB-powered recommendations to see the graph in action
 #
 # Usage:
-#   chmod +x neo4j-demo.sh
-#   ./neo4j-demo.sh                                  # defaults to localhost:3000
-#   BASE_URL=https://your-railway-url.railway.app ./neo4j-demo.sh
+#   chmod +x arcadedb-demo.sh
+#   ./arcadedb-demo.sh                                  # defaults to localhost:3000
+#   BASE_URL=https://your-railway-url.railway.app ./arcadedb-demo.sh
 # =============================================================================
 
 BASE_URL="${BASE_URL:-http://localhost:3000}"
@@ -90,7 +90,7 @@ fi
 # =============================================================================
 # STEP 0 — Graph stats BEFORE
 # =============================================================================
-header "STEP 0 — Neo4j Graph Stats BEFORE"
+header "STEP 0 — ArcadeDB Graph Stats BEFORE"
 info "Checking current graph state..."
 STATS_BEFORE=$(curl -s "$API/recommendations/graph-stats")
 echo "$STATS_BEFORE" | jq
@@ -126,7 +126,7 @@ divider
 # STEP 2 — Users place orders (products 1-30 from seed)
 # =============================================================================
 header "STEP 2 — Users Place Orders"
-info "Each user places 2-3 orders. Neo4j PURCHASED edges will be created automatically."
+info "Each user places 2-3 orders. ArcadeDB PURCHASED edges will be created automatically."
 echo ""
 
 ORDER_IDS=()
@@ -180,7 +180,7 @@ divider
 # STEP 3 — Users submit reviews
 # =============================================================================
 header "STEP 3 — Users Submit Reviews"
-info "Reviews create (User)-[:REVIEWED]->(Product) edges in Neo4j."
+info "Reviews create (User)-[:REVIEWED]->(Product) edges in ArcadeDB."
 echo ""
 
 REVIEW_IDS=()
@@ -227,7 +227,9 @@ divider
 # =============================================================================
 # STEP 5 — Graph stats AFTER
 # =============================================================================
-header "STEP 5 — Neo4j Graph Stats AFTER"
+header "STEP 5 — ArcadeDB Graph Stats AFTER"
+info "Waiting for sync queue to drain..."
+sleep 5
 info "Comparing graph before and after the simulation..."
 echo ""
 
@@ -245,9 +247,9 @@ echo -e "  REVIEWED  edges: ${BEFORE_REVIEWS} → ${GREEN}${AFTER_REVIEWS}${RESE
 divider
 
 # =============================================================================
-# STEP 6 — Query Neo4j Recommendations
+# STEP 6 — Query ArcadeDB Recommendations
 # =============================================================================
-header "STEP 6 — Neo4j Recommendations in Action"
+header "STEP 6 — ArcadeDB Recommendations in Action"
 
 # 6a. "Also bought" for product 1
 # Expected: products 2,3,4,5,6,... (all products bought by users who also bought product 1)
@@ -282,9 +284,9 @@ curl -s "$API/recommendations/trending?limit=8" | jq '.data[] | "  → [\(.purch
 divider
 
 # =============================================================================
-# STEP 7 — Cleanup demo: delete one review (removes Neo4j edge)
+# STEP 7 — Cleanup demo: delete one review (removes ArcadeDB edge)
 # =============================================================================
-header "STEP 7 — Cleanup: Delete a Review (Neo4j edge removed)"
+header "STEP 7 — Cleanup: Delete a Review (ArcadeDB edge removed)"
 
 if [ "${#REVIEW_IDS[@]}" -gt 0 ]; then
   FIRST_REVIEW="${REVIEW_IDS[0]%%:*}"
